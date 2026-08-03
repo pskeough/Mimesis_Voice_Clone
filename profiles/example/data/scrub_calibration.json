@@ -112,5 +112,12 @@
   "burstiness_floor": 6.687576856420143,
   "hedge_ceiling": 1.550387596899225,
   "mean_sentence_len": 17.333333333333332,
-  "n_pieces": 8
+  "n_pieces": 8,
+  "dash_per1k_p95": 0.0,
+  "cleft_p95": 1.0,
+  "antithesis_p95": 3.0,
+  "cleft_p25": 0.0,
+  "antithesis_p25": 0.0,
+  "density_p25": 28.91156462585034,
+  "specificity_p25": 0.0
 }

@@ -34,6 +34,12 @@ from mimesis_voice.fingerprint import FEATURE_SETS, Fingerprint  # noqa: E402
 # Constants in the engine that encode one author's habits rather than a general
 # property of prose. Each is listed with what would happen to a different author.
 AUTHOR_SHAPED_CONSTANTS = [
+    ("scrub.AUTHOR_DASH_BAND_MIN", scrub.AUTHOR_DASH_BAND_MIN,
+     "rate above which an author's prose dashes survive the scalpel. Chosen, not "
+     "measured: it separates a novel scoring 0.63 from articles at 12.6 on one "
+     "author. A writer whose real rate sits near it gets the wrong side of the "
+     "call, and the failure is silent either way (habit deleted, or a model tell "
+     "kept)."),
     ("scrub.AI_TELL_WORDS", len(scrub.AI_TELL_WORDS),
      "static 2023-vintage LLM vocabulary. Filtered per author by the >=3-uses "
      "whitelist rule, so it adapts, but the LIST itself was never re-derived and "

@@ -29,8 +29,15 @@
     "ttr": 0.0701818702055557,
     "word_len_mean": 0.08054137485734153
   },
-  "self_baseline": 0.9755874672066656,
-  "fit_threshold": 1.4705665324297241,
+  "self_baseline": 0.9700292656366556,
+  "fit_threshold": 1.4416638842656722,
   "n_pieces": 8,
-  "meta": {}
+  "meta": {
+    "corpus_spread": 1.1268221258608615
+  },
+  "feature_set": "v1",
+  "cuts": [
+    12.0,
+    22.0
+  ]
 }

@@ -1,0 +1,14 @@
+{
+  "floors": {
+    "epistemic": 3.472,
+    "expectation": 0.12
+  },
+  "corpus_medians": {
+    "epistemic": 3.846,
+    "expectation": 0.0,
+    "stance": 0.0,
+    "signpost": 0.0,
+    "agency": 3.401
+  },
+  "n_pieces": 7
+}

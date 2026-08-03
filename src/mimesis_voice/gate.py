@@ -33,7 +33,7 @@ from . import cadence as cadence_mod
 from . import composite as composite_mod
 from . import config, fidelity, ingest, retrieve, textnorm
 from .fingerprint import Fingerprint
-from .scrub import ScrubCalibration, ScrubReport, analyze, render, scalpel
+from .scrub import ScrubCalibration, ScrubReport, analyze, author_uses_dashes, render, scalpel
 
 # Host env vars that would redirect the subprocess to managed-provider auth that
 # never arrives; strip them so the CLI uses its own OAuth/keychain (ported RVCR).
@@ -52,6 +52,12 @@ _STATIC_SYSTEM = (
 )
 
 _SLATE_MARK = "===CANDIDATE==="
+
+
+
+def _allow_dashes(cal: ScrubCalibration) -> bool:
+    """Whether this author's own dash habit should survive the scalpel."""
+    return author_uses_dashes(cal)
 
 
 def _claude_bin() -> str:
@@ -541,7 +547,7 @@ def compose(
         and ``$d_{\\mathrm{pop}}$`` and meant nothing. The scalpel still operates
         on the original text, because that is what ships.
         """
-        fixed, n_em = scalpel(text, fmt=markup)
+        fixed, n_em = scalpel(text, fmt=markup, allow_dashes=_allow_dashes(cal))
         r, zs = _score(textnorm.to_prose(fixed, markup), fp)
         c = Candidate(text=fixed, rmsz=r, zs=zs, emdash_fixed=n_em)
         c.scrub = analyze(fixed, cal, source=task, fp=fp)
@@ -661,7 +667,7 @@ def compose(
                 _scrub_rewrite_prompt(kit, chosen.text, chosen.scrub, profile.name),
                 model=model,
             )
-            r_fixed, r_em = scalpel(repaired, fmt=markup)
+            r_fixed, r_em = scalpel(repaired, fmt=markup, allow_dashes=_allow_dashes(cal))
             r_rep = analyze(r_fixed, cal, source=task, fp=fp)
             r_fid = fidelity.verify(source, r_fixed, fmt=markup) if source else None
             r_rmsz = _score(textnorm.to_prose(r_fixed, markup), fp)[0]
@@ -710,7 +716,7 @@ def compose(
                 demachined = claude_generate(
                     _detector_rewrite_prompt(kit, chosen.text, profile.name), model=model
                 )
-                d_fixed, d_em = scalpel(demachined, fmt=markup)
+                d_fixed, d_em = scalpel(demachined, fmt=markup, allow_dashes=_allow_dashes(cal))
                 d_rmsz = _score(textnorm.to_prose(d_fixed, markup), fp)[0]
                 d_fid = fidelity.verify(source, d_fixed, fmt=markup) if source else None
                 d_det = detector_signal(

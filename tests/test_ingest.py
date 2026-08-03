@@ -49,3 +49,30 @@ def test_pdf_is_a_supported_extension():
     """Corpora that exist only as PDFs are common enough that dropping them
     silently (find_documents filters on SUPPORTED_EXTS) reads as 'no documents'."""
     assert ".pdf" in ingest.SUPPORTED_EXTS
+
+
+# --- scrubber: the dash rule must follow the author, not the builder ----------
+
+def test_dash_strip_is_disabled_for_an_author_who_uses_dashes():
+    """The em-dash strip was unconditional. For a writer whose own corpus runs
+    dashes as punctuation that is not de-AI-ing a draft, it is deleting a habit:
+    a measured social corpus ran 42/1000 words at p95."""
+    from mimesis_voice import scrub
+
+    text = "the room -- and the hall -- went quiet"
+    stripped, n = scrub.scalpel(text)
+    assert n > 0 and "--" not in stripped, "default behaviour must still strip"
+
+    kept, n_kept = scrub.scalpel(text, allow_dashes=True)
+    assert kept == text and n_kept == 0, "an author's own dashes must survive"
+
+
+def test_author_uses_dashes_follows_the_calibrated_band():
+    from mimesis_voice.scrub import ScrubCalibration, author_uses_dashes
+
+    base = dict(banned_words=[], banned_phrases=[], whitelist=[],
+                burstiness_floor=5.0, hedge_ceiling=1.0, mean_sentence_len=18.0)
+    # A novel with no em-dashes still scores slightly above zero on en-dashes and
+    # hyphen runs; that must not license the habit.
+    assert not author_uses_dashes(ScrubCalibration(**base, dash_per1k_p95=0.63))
+    assert author_uses_dashes(ScrubCalibration(**base, dash_per1k_p95=12.63))

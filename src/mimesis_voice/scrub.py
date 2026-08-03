@@ -2,7 +2,8 @@
 
 Three tiers, merged from v1's calibrated scrubber and RVCR's fidelity audit:
 
-1. **Hard rules** — em-dashes to zero, a corpus-calibrated AI banlist minus a
+1. **Hard rules** — a prose-dash ceiling read from the author's own corpus, a
+   corpus-calibrated AI banlist minus a
    per-author whitelist, a burstiness floor, and a hedge ceiling. The banlist is
    the static AI-tell wordlist filtered against words the author actually uses,
    so it never fights the author's own vocabulary (ported v1 calibration).
@@ -13,9 +14,12 @@ Three tiers, merged from v1's calibrated scrubber and RVCR's fidelity audit:
 3. **Detector (optional, extra ``[detect]``)** — a perplexity-ratio signal for
    *reporting only*, never a gate. The base install reports it as not installed.
 
-Scalpel mode is deliberate: the scrubber strips the few things that are always
-safe (em-dashes) and *flags* the rest. It never rewrites prose to force the mean,
-because mean-collapse kills the voice it is trying to protect.
+Scalpel mode is deliberate: the scrubber strips only what is always safe and
+*flags* the rest. It never rewrites prose to force the mean, because
+mean-collapse kills the voice it is trying to protect. "Always safe" is itself
+per-author: the em-dash strip is a genuine de-AI edit for a writer who does not
+use them and pure vandalism for one who does, so it runs only below the
+calibrated AUTHOR_DASH_BAND_MIN and drafts above it are flagged, not rewritten.
 """
 from __future__ import annotations
 
@@ -151,6 +155,10 @@ class ScrubCalibration:
     # picks them up without a signature change.
     cleft_p95: float = 0.0
     antithesis_p95: float = 0.0
+    # Prose dashes per 1000 words, 95th percentile over the author's own
+    # pieces. Zero for an author who does not use them, which is the case a
+    # blanket strip-to-zero rule silently assumed for everyone.
+    dash_per1k_p95: float = 0.0
     cleft_p25: float = 0.0
     antithesis_p25: float = 0.0
     density_p25: float = 0.0
@@ -167,6 +175,7 @@ class ScrubCalibration:
                     "hedge_ceiling": self.hedge_ceiling,
                     "mean_sentence_len": self.mean_sentence_len,
                     "n_pieces": self.n_pieces,
+                    "dash_per1k_p95": self.dash_per1k_p95,
                     "cleft_p95": self.cleft_p95,
                     "antithesis_p95": self.antithesis_p95,
                     "cleft_p25": self.cleft_p25,
@@ -190,6 +199,7 @@ class ScrubCalibration:
             hedge_ceiling=d.get("hedge_ceiling", 1.5),
             mean_sentence_len=d.get("mean_sentence_len", 18.0),
             n_pieces=d.get("n_pieces", 0),
+            dash_per1k_p95=d.get("dash_per1k_p95", 0.0),
             cleft_p95=d.get("cleft_p95", 0.0),
             antithesis_p95=d.get("antithesis_p95", 0.0),
             cleft_p25=d.get("cleft_p25", 0.0),
@@ -207,6 +217,25 @@ def _percentile(values: list[float], p: int) -> float:
     return s[idx]
 
 
+# Above this calibrated rate the author demonstrably uses prose dashes as
+# punctuation, and stripping them is not de-AI-ing a draft, it is deleting a
+# habit. Below it, strip-to-zero stands: the em-dash is a genuine model tell.
+#
+# The band is read off dash_per1k_p95, which is a TAIL statistic, so the cutoff
+# has to sit well above zero: a novel with no em-dashes at all still scored 0.63
+# on a handful of en-dashes and hyphen runs, and a 0.5 cutoff wrongly licensed
+# the habit for it. Measured reference points, same author, three corpora:
+# novel 0.63 (no habit), long-form articles 12.6, short social posts 42.3.
+#
+# NOTE: this is an engine constant describing authors in general, not one
+# measured from any corpus. scripts/portability_audit.py lists it as such.
+AUTHOR_DASH_BAND_MIN = 2.0  # dashes per 1000 words
+
+
+def author_uses_dashes(cal: "ScrubCalibration") -> bool:
+    return cal.dash_per1k_p95 >= AUTHOR_DASH_BAND_MIN
+
+
 def calibrate(texts: list[str], whitelist: list[str] | None = None) -> ScrubCalibration:
     """Calibrate scrub thresholds from corpus pieces.
 
@@ -217,6 +246,7 @@ def calibrate(texts: list[str], whitelist: list[str] | None = None) -> ScrubCali
     """
     explicit = {w.lower() for w in (whitelist or [])}
     bursts: list[float] = []
+    dashes_per1k: list[float] = []
     hedges_per200: list[float] = []
     mean_lens: list[float] = []
     vocab: dict[str, int] = {}
@@ -232,6 +262,7 @@ def calibrate(texts: list[str], whitelist: list[str] | None = None) -> ScrubCali
         bursts.append(statistics.stdev(sent_lens))
         mean_lens.append(statistics.mean(sent_lens))
         hedges_per200.append(len(_HEDGE_RE.findall(text)) * 200 / wc if wc else 0.0)
+        dashes_per1k.append(count_dashes(text) * 1000 / wc if wc else 0.0)
         for w in _WORD_RE.findall(text.lower()):
             vocab[w] = vocab.get(w, 0) + 1
 
@@ -246,6 +277,7 @@ def calibrate(texts: list[str], whitelist: list[str] | None = None) -> ScrubCali
         whitelist=kept,
         burstiness_floor=_percentile(bursts, 5) if bursts else 5.0,
         hedge_ceiling=_percentile(hedges_per200, 95) if hedges_per200 else 1.5,
+        dash_per1k_p95=_percentile(dashes_per1k, 95) if dashes_per1k else 0.0,
         mean_sentence_len=_percentile(mean_lens, 50) if mean_lens else 18.0,
         n_pieces=n,
         cleft_p95=rhet.cleft_p95,
@@ -289,6 +321,8 @@ class ScrubReport:
     """Structured scrub result. ``hard_flags`` drive the gate; the rest is advisory."""
 
     emdash_count: int = 0
+    dash_band_per1k: float = 0.0
+    word_count: int = 0
     banned_words: list[str] = field(default_factory=list)
     banned_phrases: list[str] = field(default_factory=list)
     hedge_density: float = 0.0
@@ -414,6 +448,8 @@ def analyze(
     rep = ScrubReport()
     # Same counter the scalpel uses, or the report and the fix disagree.
     rep.emdash_count = count_dashes(text)
+    rep.dash_band_per1k = cal.dash_per1k_p95
+    rep.word_count = len(_WORD_RE.findall(text))
 
     lower = text.lower()
     rep.banned_words = [
@@ -470,10 +506,21 @@ def render(rep: ScrubReport, author: str = "the author") -> str:
     if rep.presence:
         style.extend(presence_mod.render_lines(rep.presence, author))
     if rep.emdash_count:
-        style.append(
-            f"- [HIGH] Em-dashes: found {rep.emdash_count}. Target is zero. "
-            f"Replace with commas, colons, or split the sentence."
-        )
+        # An author with a calibrated dash habit is held to THEIR rate, not zero.
+        band = getattr(rep, "dash_band_per1k", 0.0)
+        wc = getattr(rep, "word_count", 0) or 0
+        rate = rep.emdash_count * 1000 / wc if wc else 0.0
+        if band >= AUTHOR_DASH_BAND_MIN:
+            if rate > band:
+                style.append(
+                    f"- [MEDIUM] Dashes: {rate:.1f}/1000 words against this author's "
+                    f"calibrated {band:.1f}. Thin them out; do not remove them all."
+                )
+        else:
+            style.append(
+                f"- [HIGH] Em-dashes: found {rep.emdash_count}. Target is zero. "
+                f"Replace with commas, colons, or split the sentence."
+            )
     if rep.banned_phrases:
         style.append(
             f"- [HIGH] AI cliche phrases: {'; '.join(rep.banned_phrases)}. Rephrase these lines."
@@ -656,7 +703,7 @@ def count_dashes(text: str, fmt: str | None = None) -> int:
     return sum(len(pat.findall(stripped[a:b])) for a, b in _editable(stripped, kind))
 
 
-def scalpel(text: str, fmt: str | None = None) -> tuple[str, int]:
+def scalpel(text: str, fmt: str | None = None, allow_dashes: bool = False) -> tuple[str, int]:
     """Deterministic, meaning-preserving surface fix: strip em-dashes.
 
     Returns (fixed_text, replacements). This is the only edit the scrubber makes
@@ -667,7 +714,16 @@ def scalpel(text: str, fmt: str | None = None) -> tuple[str, int]:
     under a heading is structure and turning it into ", " corrupts the document.
     And markup or data spans -- math, tables, citation keys, numeric ranges --
     because an edit there is a change to the content rather than to the prose.
+
+    ``allow_dashes`` turns the strip off for an author whose own corpus uses
+    prose dashes as punctuation (see AUTHOR_DASH_BAND_MIN). For them this edit
+    is not de-AI-ing a draft, it is deleting a habit: one measured LinkedIn
+    corpus ran 4.9 dashes per 1000 words, and stripping every one flattens the
+    most distinctive punctuation in the voice. Those drafts are flagged against
+    the author's calibrated rate instead of silently rewritten.
     """
+    if allow_dashes:
+        return text, 0
     kind = _resolve_fmt(text, fmt)
     pat = _dash_re(kind)
     spans = _editable(text, kind)
