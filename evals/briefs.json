@@ -1,0 +1,104 @@
+{
+  "_about": "Frozen fixed brief set for the Mimesis upgrade A/B. 14 prompts (7 research, 7 creative) spanning the genres each voice writes. Frozen at baseline and reused UNCHANGED across every engine config (baseline, style, detect, recalibrate, combined) so cross-config deltas are attributable to the engine, not the prompt. Content is deliberately generic (no corpus specifics) to avoid leaking the author's real pieces into the brief. Target word ranges keep generations length-comparable, which stabilises length-sensitive fingerprint features (TTR window, paragraph length).",
+  "version": 1,
+  "briefs": [
+    {
+      "id": "res_abstract",
+      "voice": "research",
+      "genre": "abstract",
+      "target_words": [150, 220],
+      "task": "Write the abstract for a short technical report that studies how to build a reliable question-answering assistant over a private collection of documents using only local, on-device models. State the practical question, name the two or three levers explored (retrieval, fine-tuning, base-model choice), and preview that each is measured alone and in combination against a fixed held-out test set. Do not invent specific numeric results."
+    },
+    {
+      "id": "res_gap",
+      "voice": "research",
+      "genre": "gap_statement",
+      "target_words": [150, 220],
+      "task": "Write a motivation-and-gap paragraph for a paper. Set up the recurring choice an organisation faces between paying a frontier model provider for every query (sending data off-premises) and running a smaller model locally that keeps data in house at near-zero marginal cost. Name the trade-offs on each side, then state the open question the paper addresses. No fabricated statistics."
+    },
+    {
+      "id": "res_methods",
+      "voice": "research",
+      "genre": "methods",
+      "target_words": [150, 230],
+      "task": "Write a methods paragraph describing a blind, order-controlled evaluation protocol that uses a language model as an automatic judge. Explain the controls that remove known failure modes: candidates shown as A/B only, both orders run, a decisive win counted only when both orders agree, everything else a tie. Keep it precise and procedural."
+    },
+    {
+      "id": "res_results",
+      "voice": "research",
+      "genre": "results",
+      "target_words": [150, 230],
+      "task": "Write a results paragraph that reports three findings from an ablation study, using placeholder ranges rather than invented exact numbers: retrieval is a large and reliable win across all systems; fine-tuning on its own is close to a no-op; fine-tuning layered on top of retrieval is a small and model-dependent effect, helping some systems and slightly hurting others. Frame the takeaways plainly."
+    },
+    {
+      "id": "res_limitations",
+      "voice": "research",
+      "genre": "limitations",
+      "target_words": [140, 210],
+      "task": "Write a limitations paragraph for a technical report. Acknowledge the constraints honestly: a single fixed corpus and test set, a narrow set of base models, an automatic judge that approximates but does not equal human preference, and results that may not transfer to other domains. Avoid hedging into vagueness; be specific about what does and does not generalise."
+    },
+    {
+      "id": "res_related",
+      "voice": "research",
+      "genre": "related_work",
+      "target_words": [150, 220],
+      "task": "Write a related-work paragraph situating a study of local retrieval-augmented question answering against prior lines of work: retrieval-augmented generation, parameter-efficient fine-tuning, and automatic LLM-based evaluation. Characterise what each line established and where the present work departs from it. Reference the ideas, not specific citations."
+    },
+    {
+      "id": "res_discussion",
+      "voice": "research",
+      "genre": "discussion",
+      "target_words": [150, 230],
+      "task": "Write a discussion paragraph interpreting why retrieval helps far more than fine-tuning for grounded question answering over a fixed corpus. Reason about where each technique adds information versus merely reweighting what a model already knows, and what that implies for practitioners deciding where to spend limited effort."
+    },
+    {
+      "id": "cre_time_memory",
+      "voice": "creative",
+      "genre": "meditation",
+      "target_words": [150, 230],
+      "task": "Write a short prose meditation on how memory reshapes the past each time it is recalled, so that the remembered thing and the real thing slowly diverge. Let it move associatively rather than argue a point. No title."
+    },
+    {
+      "id": "cre_sea_figure",
+      "voice": "creative",
+      "genre": "vignette",
+      "target_words": [150, 230],
+      "task": "Write a short literary vignette: a single figure standing at the edge of the sea at dusk, waiting for something that may not come. Render the scene through concrete sensory detail and let an inner weather show through the outer one. No title, no explanation."
+    },
+    {
+      "id": "cre_desire",
+      "voice": "creative",
+      "genre": "philosophical_fragment",
+      "target_words": [140, 220],
+      "task": "Write a philosophical prose fragment on the way desire is deformed by its own object: how wanting a thing changes both the wanter and the thing wanted, and how possession rarely resembles the longing that preceded it. Keep it aphoristic and dense, not academic."
+    },
+    {
+      "id": "cre_myth",
+      "voice": "creative",
+      "genre": "myth_miniature",
+      "target_words": [150, 230],
+      "task": "Write a miniature retelling of a myth of your choosing, compressed to a single dense passage, told as if the teller half-believes it. Favour image and cadence over plot summary. No title."
+    },
+    {
+      "id": "cre_solitude",
+      "voice": "creative",
+      "genre": "reflection",
+      "target_words": [150, 220],
+      "task": "Write a short reflection on chosen solitude: not loneliness but the deliberate withdrawal that lets a person hear themselves think. Move between the interior experience and the small physical facts of a room or a walk. No title."
+    },
+    {
+      "id": "cre_entropy",
+      "voice": "creative",
+      "genre": "prose_poem",
+      "target_words": [130, 210],
+      "task": "Write a prose-poem on decay and entropy: the slow, patient undoing of made things, held without despair, almost with tenderness. Let the rhythm carry it. No title."
+    },
+    {
+      "id": "cre_doubt",
+      "voice": "creative",
+      "genre": "interior_monologue",
+      "target_words": [150, 230],
+      "task": "Write an interior monologue of a mind caught in hesitation before a decision it keeps failing to make, circling the same doubt, aware of its own circling. Let the syntax enact the hesitation. No title."
+    }
+  ]
+}

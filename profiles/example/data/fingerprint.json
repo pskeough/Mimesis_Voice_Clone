@@ -1,0 +1,36 @@
+{
+  "means": {
+    "sent_len_mean": 15.878620766488414,
+    "sent_len_stdev": 10.995819929177872,
+    "pct_short_sents": 0.29462633975501623,
+    "pct_long_sents": 0.10385458087663971,
+    "colons_per_100w": 0.0,
+    "semicolons_per_100w": 0.0,
+    "emdash_per_100w": 0.0,
+    "question_rate": 0.0,
+    "commas_per_sent": 0.8629012123497417,
+    "para_len_mean": 3.541666666666667,
+    "first_person_openers": 0.25076286050550756,
+    "ttr": 0.4752634313266153,
+    "word_len_mean": 3.839156904599944
+  },
+  "stds": {
+    "sent_len_mean": 2.5188584715855162,
+    "sent_len_stdev": 3.1144170258483865,
+    "pct_short_sents": 0.14103587559743996,
+    "pct_long_sents": 0.06522334264874041,
+    "colons_per_100w": 0.0,
+    "semicolons_per_100w": 0.0,
+    "emdash_per_100w": 0.0,
+    "question_rate": 0.0,
+    "commas_per_sent": 0.22388757139040727,
+    "para_len_mean": 0.5860142476192012,
+    "first_person_openers": 0.08654197155107139,
+    "ttr": 0.0701818702055557,
+    "word_len_mean": 0.08054137485734153
+  },
+  "self_baseline": 0.9755874672066656,
+  "fit_threshold": 1.4705665324297241,
+  "n_pieces": 8,
+  "meta": {}
+}

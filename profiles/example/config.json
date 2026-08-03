@@ -1,0 +1,21 @@
+{
+  "author_name": "The Example Essayist",
+  "embed_backend": "fast",
+  "gate": {
+    "rmsz_max": 1.3,
+    "slate_size": 4,
+    "max_rewrites": 2
+  },
+  "formats": {
+    "note": {
+      "gate": {
+        "slate_size": 3
+      }
+    }
+  },
+  "anchors": {
+    "exemplars": true,
+    "transform_pairs": null
+  },
+  "whitelist": []
+}

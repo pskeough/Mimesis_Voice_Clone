@@ -1,0 +1,86 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual env (committed deliverable asks for a local .venv; do not track it)
+.venv/
+venv/
+
+# Local model cache
+local_cache/
+fastembed_cache/
+
+# Stores and calibration artifacts are per-machine; regenerate with ingest+calibrate
+*.sqlite
+*.sqlite-*
+
+# Profiles are personal data by construction. Only the synthetic example ships.
+profiles/*
+!profiles/example/
+!profiles/example/**
+profiles/example/data/*.sqlite
+profiles/example/data/*.sqlite-*
+
+# Eval artifacts: harness code, the frozen brief set, and REPORT.md are safe to
+# commit (no corpus content). Generated voiced text under evals/<config>/ is
+# author-derived, so it stays local like the profiles it came from.
+evals/baseline/
+evals/style/
+evals/detect/
+evals/recalibrate/
+evals/combined/
+evals/reference/
+evals/scratch/
+
+# External-author comparison work: never commit generated text or any corpus.
+*_compare/
+*.local
+
+# OS noise
+.DS_Store
+Thumbs.db
+evals/cadence_e2e/
+evals/creative_ab_b/
+evals/campaigns/
+evals/_experiment_profiles/
+evals/_rejected_intake/
+evals/selection_ab/
+
+# Client-identifying eval INPUTS and run logs. The harness code that reads them
+# is generic and ships; these name the engagement, so they stay local. The
+# findings write-up (evals/CADENCE_FINDINGS.md) refers to these corpora by role
+# only and stores no external text, which is why it can ship.
+evals/briefs_*.json
+evals/specs/
+evals/*_run.log
+evals/campaigns_*.log
+evals/cadence_e2e_run.log
+evals/cadence_audit.json
+
+# Per-install voice-preference artifacts (written by the memory system's miner).
+profiles/*/accepted/
+
+# Byte-compiled test artifacts
+tests/__pycache__/
+
+# One-off manuscript tooling: drives the engine over specific local papers and
+# hardcodes their paths. Useful locally, meaningless in a distributed package.
+scripts/finish_tex_parallel.py
+scripts/fix_kept_subsections.py
+scripts/intake_harvest.py
+scripts/rewrite_sections.py
+scripts/rewrite_tex_sections.py
+scripts/tighten_tex.py
+scripts/write_sections_blind.py
+
+# All eval run outputs and logs are author-derived; only harness code ships.
+evals/*/
+!evals/specs_example/
+evals/*.log

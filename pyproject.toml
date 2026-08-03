@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mimesis-voice"
+version = "2.0.0"
+description = "One voice engine, N voices, discriminator in the loop: stylometric voice cloning with a fingerprint gate, MMR-diverse retrieval, and an AI-footprint scrubber."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Patrick Keough" }]
+keywords = ["style-transfer", "stylometry", "voice", "rag", "mcp", "authorship"]
+classifiers = [
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Text Processing :: Linguistic",
+]
+dependencies = [
+    "fastmcp>=2.0",
+    "fastembed>=0.3",
+    "numpy>=1.24",
+    "python-docx>=1.1",
+]
+
+[project.optional-dependencies]
+# Content-independent style embeddings (StyleDistance). Heavy: pulls torch.
+style = ["sentence-transformers>=3.0", "torch>=2.2"]
+# Perplexity-ratio detector signal (reporting only). Stub until detect.py ships;
+# scrub.detector_signal reports "not installed" when the module is absent.
+detect = ["transformers>=4.40", "torch>=2.2"]
+
+[project.scripts]
+mimesis = "mimesis_voice.cli:main"
+mimesis-mcp = "mimesis_voice.server:main"
+
+[project.urls]
+Homepage = "https://github.com/pskeough/Mimesis_Voice_Clone"
+Design = "https://github.com/pskeough/Mimesis_Voice_Clone/blob/main/docs/DESIGN.md"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+mimesis_voice = ["py.typed"]
