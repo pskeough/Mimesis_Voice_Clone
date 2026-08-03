@@ -28,8 +28,9 @@ dependencies = [
 [project.optional-dependencies]
 # Content-independent style embeddings (StyleDistance). Heavy: pulls torch.
 style = ["sentence-transformers>=3.0", "torch>=2.2"]
-# Perplexity-ratio detector signal (reporting only). Stub until detect.py ships;
-# scrub.detector_signal reports "not installed" when the module is absent.
+# Perplexity-ratio (Binoculars-style) detector signal. Reporting only, never a
+# gate: detector scores are noisy per-document and gating on them optimises for
+# evading a detector rather than for sounding like the author.
 detect = ["transformers>=4.40", "torch>=2.2"]
 
 [project.scripts]

@@ -32,19 +32,19 @@ candidates scored better than the judge-preferred ones.
 
 ```
  corpus ──ingest──> SQLite store ──calibrate──> fingerprint.json + scrub_calibration.json
- (docx/txt/md)      (chunks + FTS5 + vectors)         │                    │
+ (docx/pdf/txt/md)  (chunks + FTS5 + vectors)         │                    │
                                                        │                    │
  task ─────────────────────────────┐                  ▼                    ▼
                                     │          ┌───────────────┐   ┌────────────────┐
    retrieve (RRF hybrid recall,     └────────► │  compose loop │   │    scrubber    │
-   MMR λ=0.65 diversification) ───► anchors ──►│  (gate.py)    │──►│ em-dash/banlist│──► voiced draft
+   MMR λ=0.65 diversification) ───► anchors ──►│  (gate.py)    │──►│ dashes/banlist │──► voiced draft
    + transform demos                           │  slate → gate │   │ + fidelity     │
                                                │  → select     │   └────────────────┘
                                                │  → rewrite    │
                                                └───────────────┘
 ```
 
-- **ingest** — `.docx/.txt/.md` → ~180-word chunks → SQLite (chunk table, FTS5
+- **ingest** — `.docx/.pdf/.txt/.md` → ~180-word chunks → SQLite (chunk table, FTS5
   keyword index, embedding blobs). Hash-skips an unchanged corpus.
 - **embed** — `fast` (bge-small ONNX, default, no torch) or `style` (StyleDistance,
   optional `[style]` extra). Corpus matrices cached and mtime-keyed.
@@ -61,12 +61,16 @@ candidates scored better than the judge-preferred ones.
   fingerprint gate (RMS-z ≤ threshold) → quality-select among survivors → on zero
   survivors, one targeted rewrite per candidate citing the worst features (≤2
   iterations) → scalpel scrub last.
-- **scrub** — three tiers: hard rules (em-dash zero, corpus-calibrated banlist
-  minus a per-author whitelist, burstiness floor, hedge ceiling); a fidelity audit
+- **scrub** — three tiers: hard rules (a prose-dash ceiling read from the author's
+  own corpus, a corpus-calibrated banlist minus a per-author whitelist, burstiness
+  floor, hedge ceiling); a fidelity audit
   (numbers/citations/acronyms in source vs output → dropped/altered/invented); and
   an optional perplexity-ratio detector signal (reporting only). Scalpel mode
   strips the always-safe things and *flags* the rest; it never rewrites prose to
-  force the mean, because mean-collapse kills the voice.
+  force the mean, because mean-collapse kills the voice. "Always safe" is itself
+  per-author: the em-dash strip runs only for writers whose own corpus does not use
+  prose dashes. Above that calibrated band the dashes are a habit, not a tell, and
+  a draft is flagged against the author's own rate rather than rewritten.
 
 Generation shells out to the local `claude` CLI (`-p` headless, default model
 `sonnet`), so no API keys or cloud services are required beyond a working Claude
@@ -116,7 +120,7 @@ Add your own voice:
 
 ```bash
 mimesis profile new myvoice --backend fast       # or --backend style (needs [style] extra)
-# drop .docx/.txt/.md into profiles/myvoice/source_documents/
+# drop .docx/.pdf/.txt/.md into profiles/myvoice/source_documents/
 mimesis ingest myvoice && mimesis calibrate myvoice
 mimesis compose myvoice "a two-paragraph bio"
 ```
@@ -135,9 +139,9 @@ when ready; they never touch any existing `mimesis` registration. Tools:
 
 | extra | pulls | enables |
 |---|---|---|
-| _(base)_ | fastmcp, fastembed, numpy, python-docx | full engine, `fast` embeddings |
+| _(base)_ | fastmcp, fastembed, numpy, python-docx, pypdf | full engine, `fast` embeddings, PDF ingest |
 | `[style]` | sentence-transformers, torch | StyleDistance `style` backend |
-| `[detect]` | transformers, torch | perplexity-ratio detector signal (stub: reports "not installed" until `detect.py` ships) |
+| `[detect]` | transformers, torch | Binoculars-style perplexity-ratio detector signal (reporting only, never a gate) |
 
 ---
 
