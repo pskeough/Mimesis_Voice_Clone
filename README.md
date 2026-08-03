@@ -76,6 +76,20 @@ Code install. Everything else runs fully offline.
 
 ## Quickstart
 
+One command, macOS or Linux:
+
+```bash
+git clone https://github.com/pskeough/Mimesis_Voice_Clone.git
+cd Mimesis_Voice_Clone
+bash install.sh
+```
+
+That creates the venv, installs the package, builds and calibrates every voice
+that ships with a corpus, registers the MCP server with Claude Code, and runs a
+health check on each profile. It is safe to re-run and skips finished work.
+
+Or step by step:
+
 ```bash
 git clone https://github.com/pskeough/Mimesis_Voice_Clone.git
 cd Mimesis_Voice_Clone
