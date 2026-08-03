@@ -126,6 +126,12 @@ def chunk_paragraphs(paragraphs: list[str]) -> list[str]:
         cur: list[str] = []
         cur_wc = 0
         j = i
+        # Set when the oversized-paragraph branch below handles this iteration by
+        # itself. Without it that branch falls through to the small-tail check
+        # with cur_wc == 0, which merges nothing and BREAKS the outer loop, so a
+        # single paragraph over HARD_CAP_WORDS silently truncated the rest of the
+        # document. Measured on a novel: 102,000 words in, 7 chunks out.
+        split_oversized = False
         while j < len(paragraphs):
             p = paragraphs[j]
             p_wc = len(p.split())
@@ -146,6 +152,7 @@ def chunk_paragraphs(paragraphs: list[str]) -> list[str]:
                     chunks.append(" ".join(accum))
                 j += 1
                 i = j
+                split_oversized = True
                 break
             if cur and cur_wc + p_wc > TARGET_WORDS:
                 break
@@ -154,6 +161,8 @@ def chunk_paragraphs(paragraphs: list[str]) -> list[str]:
             j += 1
             if cur_wc >= TARGET_WORDS:
                 break
+        if split_oversized:
+            continue  # that paragraph became chunks on its own; keep going
         if cur_wc < MIN_WORDS and chunks:
             chunks[-1] = chunks[-1] + "\n\n" + "\n\n".join(cur)
             break
