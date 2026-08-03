@@ -33,7 +33,7 @@ PROFILES_DIR = REPO_ROOT / "profiles"
 STATE_PATH = PROFILES_DIR / "state.json"
 
 # Formats ingest understands.
-SUPPORTED_EXTS = (".docx", ".txt", ".md")
+SUPPORTED_EXTS = (".docx", ".pdf", ".txt", ".md")
 
 # Default gate knobs; a profile's config.json "gate" block overrides per-key.
 #

@@ -1,14 +1,16 @@
 """Ingestion: documents -> ~180-word chunks -> SQLite (chunks + FTS5 + vectors).
 
-Reads ``.docx`` / ``.txt`` / ``.md`` from a profile's ``source_documents/``,
+Reads ``.docx`` / ``.pdf`` / ``.txt`` / ``.md`` from a profile's ``source_documents/``,
 packs paragraphs into ~180-word chunks with one-paragraph overlap, embeds them
 with the profile's backend, and writes an SQLite store with a chunk table, an
 FTS5 keyword index (skipped gracefully if the SQLite build lacks FTS5), and a
 ``meta`` table holding the corpus hash.
 
-Ported from the v1 Claude_Style_Clone_MCP ingest, minus the PDF path (v2 targets
-docx/txt/md per the design) and plus a corpus-hash short-circuit: an unchanged
-corpus skips the whole embed pass (``hash-skip``).
+Ported from the v1 ingest, plus a corpus-hash short-circuit: an unchanged corpus
+skips the whole embed pass (``hash-skip``). The PDF path was dropped in the v2
+design and restored here, because a great many real corpora -- reports, papers,
+published articles -- exist only as PDFs, and telling an author to convert them
+by hand is where an install stalls.
 """
 from __future__ import annotations
 
@@ -59,6 +61,45 @@ def _extract_docx(path: Path) -> list[str]:
     return _finalize_paragraphs([p.text for p in doc.paragraphs if p.text.strip()])
 
 
+def _extract_pdf(path: Path) -> list[str]:
+    """Extract paragraphs from a PDF.
+
+    PDFs store lines, not paragraphs, so a naive extraction yields one "paragraph"
+    per visual line and destroys the paragraph-length feature the fingerprint
+    depends on. Two repairs are applied before splitting: hyphens at a line break
+    are closed up, and a newline is treated as a soft wrap (joined with a space)
+    unless the previous line ended a sentence. Genuine blank lines stay as
+    paragraph breaks. Page furniture -- numbers, running heads -- survives as very
+    short blocks and is dropped by the >= 8-word floor in _finalize_paragraphs.
+
+    CAVEAT: paragraph recovery from PDF is approximate, and ``paragraph_length``
+    is one of the 13 fingerprint features. A line ending in a colon, or a wrapped
+    line whose continuation starts with a capital, reads as a break here and is
+    not one, so PDF-derived paragraph lengths skew short. Keep PDF-sourced and
+    natively-paragraphed (docx/md/txt) documents in SEPARATE profiles rather than
+    blending them, so the feature is at least measured consistently within any one
+    calibration.
+    """
+    from pypdf import PdfReader  # lazy; pypdf is a base dep
+
+    pages = []
+    for page in PdfReader(str(path)).pages:
+        try:
+            pages.append(page.extract_text() or "")
+        except Exception:  # a single unreadable page should not lose the document
+            continue
+    raw = "\n\n".join(pages)
+    raw = re.sub(r"[ \t]+\n", "\n", raw)                        # trailing space before wrap
+    raw = re.sub(r"(\w)-\n(\w)", r"\1\2", raw)                  # de-hyphenate
+    raw = re.sub(r"(?<![.!?:;\"')\]])\n(?=[a-z(])", " ", raw)   # unwrap soft breaks
+    raw = clean_text(raw)
+    # Split on ANY remaining newline, not just blank lines. Soft wraps were just
+    # joined above, so what is left is a real break -- and these files often have
+    # no blank lines at all, in which case blank-line splitting returns one
+    # page-sized "paragraph" and the paragraph-length feature becomes meaningless.
+    return _finalize_paragraphs(re.split(r"\n+", raw))
+
+
 def _extract_text(path: Path) -> list[str]:
     raw = clean_text(path.read_text(encoding="utf-8", errors="replace"))
     blocks = re.split(r"\n\s*\n", raw)
@@ -70,6 +111,8 @@ def extract_paragraphs(path: Path) -> list[str]:
     suffix = path.suffix.lower()
     if suffix == ".docx":
         return _extract_docx(path)
+    if suffix == ".pdf":
+        return _extract_pdf(path)
     if suffix in (".txt", ".md"):
         return _extract_text(path)
     return []
