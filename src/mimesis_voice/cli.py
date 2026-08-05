@@ -2,6 +2,8 @@
 
 Subcommands::
 
+    mimesis new NAME [--from PATH ...] [--backend fast|style] [--no-build]
+    mimesis add NAME --from PATH ... [--no-build]
     mimesis profile list|use NAME|new NAME [--backend fast|style]
     mimesis ingest [NAME] [--force]
     mimesis calibrate [NAME]
@@ -16,6 +18,8 @@ The CLI is the human entry point; ``mimesis_voice.server`` is the MCP entry poin
 from __future__ import annotations
 
 import argparse
+import hashlib
+import shutil
 import sqlite3
 import sys
 from pathlib import Path
@@ -88,6 +92,153 @@ def cmd_profile_new(name: str, backend: str) -> int:
     print(f"Add documents to: {prof.source_dir}")
     print(f"Then: mimesis ingest {prof.slug} && mimesis calibrate {prof.slug}")
     return 0
+
+
+# --- corpus import (new / add) ------------------------------------------------
+
+
+def _flatten_name(path: Path, root: Path) -> str:
+    """Filename for a source document once it is flattened into source_documents/.
+
+    ``ingest.find_documents`` reads one directory level, deliberately: a corpus is
+    a flat pile of pieces and a recursive walk would quietly hoover up whatever
+    else lives under the folder. So the recursion happens HERE, at import, where
+    it is visible and reported. Nested paths are folded into the name rather than
+    dropped, because ``essays/2024/rain.txt`` and ``notes/2024/rain.txt`` are two
+    different pieces and collapsing both to ``rain.txt`` would silently keep one.
+    """
+    try:
+        rel = path.relative_to(root)
+    except ValueError:
+        rel = Path(path.name)
+    parts = [config.slugify(p) for p in rel.parts[:-1]] + [rel.stem]
+    return "__".join(p for p in parts if p) + path.suffix.lower()
+
+
+def _collect(sources: list[str]) -> tuple[list[tuple[Path, Path]], dict[str, int]]:
+    """Resolve --from arguments to (file, walk-root) pairs, plus a skip tally."""
+    found: list[tuple[Path, Path]] = []
+    skipped: dict[str, int] = {}
+    for raw in sources:
+        src = Path(raw).expanduser()
+        if not src.exists():
+            print(f"  ! no such path, skipped: {src}")
+            continue
+        if src.is_file():
+            if src.suffix.lower() in config.SUPPORTED_EXTS:
+                found.append((src, src.parent))
+            else:
+                skipped[src.suffix.lower() or "(no extension)"] = \
+                    skipped.get(src.suffix.lower() or "(no extension)", 0) + 1
+            continue
+        for p in sorted(src.rglob("*")):
+            if not p.is_file():
+                continue
+            ext = p.suffix.lower()
+            if ext in config.SUPPORTED_EXTS:
+                found.append((p, src))
+            else:
+                skipped[ext or "(no extension)"] = skipped.get(ext or "(no extension)", 0) + 1
+    return found, skipped
+
+
+def _import_documents(prof: config.Profile, sources: list[str]) -> int:
+    """Copy every supported document under `sources` into the profile's corpus.
+
+    Idempotent by content hash, so re-running the same import after adding a few
+    files copies only the few. Returns the number of new documents.
+    """
+    prof.source_dir.mkdir(parents=True, exist_ok=True)
+    existing = {
+        hashlib.sha256(p.read_bytes()).hexdigest()
+        for p in prof.source_dir.iterdir()
+        if p.is_file()
+    }
+
+    found, skipped = _collect(sources)
+    if not found:
+        print(f"  found no {', '.join(config.SUPPORTED_EXTS)} files under: {', '.join(sources)}")
+        if skipped:
+            print(f"  saw instead: {', '.join(f'{n}x {e}' for e, n in sorted(skipped.items()))}")
+        return 0
+
+    copied = dupes = 0
+    for src, root in found:
+        digest = hashlib.sha256(src.read_bytes()).hexdigest()
+        if digest in existing:
+            dupes += 1
+            continue
+        dest = prof.source_dir / _flatten_name(src, root)
+        n = 2
+        while dest.exists():  # same name, different content: keep both
+            dest = dest.with_name(f"{dest.stem}-{n}{dest.suffix}")
+            n += 1
+        shutil.copy2(src, dest)
+        existing.add(digest)
+        copied += 1
+
+    print(f"  imported {copied} document(s) into {prof.source_dir}")
+    if dupes:
+        print(f"  skipped {dupes} already present (identical content)")
+    if skipped:
+        print(f"  ignored unsupported: {', '.join(f'{n}x {e}' for e, n in sorted(skipped.items()))}")
+    return copied
+
+
+def _build(prof: config.Profile) -> int:
+    """ingest + calibrate, the two steps that turn a corpus into a voice."""
+    if not ingest.find_documents(prof.source_dir):
+        print(f"\nNo documents in {prof.source_dir} yet, so nothing to build.")
+        print(f"Drop {', '.join(config.SUPPORTED_EXTS)} files there, then: mimesis add {prof.slug}")
+        return 0
+    if cmd_ingest(prof.slug, force=False) != 0:
+        return 1
+    return cmd_calibrate(prof.slug)
+
+
+def cmd_new(args) -> int:
+    slug = config.slugify(args.name)
+    if slug in config.list_profiles():
+        print(f"Profile '{slug}' already exists. To add documents to it: "
+              f"mimesis add {slug} --from PATH")
+        return 1
+    prof = config.create_profile(args.name, args.name.replace("-", " ").title(), args.backend)
+    print(f"Created voice '{prof.slug}' (backend={prof.embed_backend}).")
+
+    if args.sources:
+        _import_documents(prof, args.sources)
+    else:
+        print(f"Drop {', '.join(config.SUPPORTED_EXTS)} files into: {prof.source_dir}")
+        print(f"Then run: mimesis add {prof.slug}")
+        return 0
+
+    prof = config.resolve(prof.slug)  # pick up the corpus just written
+    if args.no_build:
+        print(f"\nNot building (--no-build). When ready: mimesis add {prof.slug}")
+        return 0
+    rc = _build(prof)
+    if rc == 0:
+        print(f"\nVoice '{prof.slug}' is ready. Try:")
+        print(f"  mimesis compose {prof.slug} \"a short note about how your week went\"")
+    return rc
+
+
+def cmd_add(args) -> int:
+    slug = config.slugify(args.name)
+    if slug not in config.list_profiles():
+        print(f"No voice '{slug}'. Create it first: mimesis new {slug} --from PATH")
+        return 1
+    prof = config.resolve(slug)
+    if args.sources:
+        _import_documents(prof, args.sources)
+        prof = config.resolve(slug)
+    if args.no_build:
+        return 0
+    # Rebuild unconditionally: `ingest` hash-skips an unchanged corpus, but the
+    # fingerprint is a z-score against corpus means, so any new document moves
+    # the baseline and a stale fingerprint.json does not error -- it silently
+    # scores every candidate against the wrong writer.
+    return _build(prof)
 
 
 # --- ingest / calibrate -------------------------------------------------------
@@ -434,7 +585,21 @@ def cmd_scrub(args) -> int:
     cal = scrub_mod.ScrubCalibration.load(prof.scrub_path)
     text = _read_text_arg(args.text)
     source = Path(args.source).read_text(encoding="utf-8") if args.source else None
-    rep = scrub_mod.analyze(text, cal, source=source, detect=args.detect)
+    # The fingerprint is what makes this a resemblance check rather than only an
+    # AI-tell check, and presence is what neither the banlist nor the fingerprint
+    # can see. The MCP tool loads both; this path did not, so `mimesis scrub`
+    # reported CLEAN on drafts that were simply unlike the author, and said so
+    # only in a note most callers never read.
+    fp = (
+        fingerprint_mod.Fingerprint.load(prof.fingerprint_path)
+        if prof.fingerprint_path.exists() else None
+    )
+    pres = (
+        presence_mod.PresenceCalibration.load(prof.presence_path)
+        if prof.presence_path.exists()
+        else presence_mod.PresenceCalibration.default()
+    )
+    rep = scrub_mod.analyze(text, cal, source=source, detect=args.detect, fp=fp, pres=pres)
     print(scrub_mod.render(rep, prof.name))
     return 0
 
@@ -618,6 +783,23 @@ def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="mimesis", description="Mimesis v2 voice engine.")
     sub = ap.add_subparsers(dest="cmd")
 
+    # `new` and `add` are the whole setup path: point them at documents and they
+    # scaffold, import, ingest and calibrate. `profile new` remains the bare
+    # scaffold for anyone who wants the steps separately.
+    p_new2 = sub.add_parser("new", help="create a voice from a folder of documents")
+    p_new2.add_argument("name")
+    p_new2.add_argument("--from", dest="sources", nargs="+", default=None, metavar="PATH",
+                        help="files or folders to import (folders are walked recursively)")
+    p_new2.add_argument("--backend", choices=["fast", "style"], default="fast")
+    p_new2.add_argument("--no-build", action="store_true",
+                        help="import only; skip ingest + calibrate")
+
+    p_add = sub.add_parser("add", help="add documents to a voice and rebuild it")
+    p_add.add_argument("name")
+    p_add.add_argument("--from", dest="sources", nargs="+", default=None, metavar="PATH",
+                       help="files or folders to import; omit to rebuild from what is already there")
+    p_add.add_argument("--no-build", action="store_true", help="import only; skip ingest + calibrate")
+
     p_prof = sub.add_parser("profile", help="list/use/new profiles")
     psub = p_prof.add_subparsers(dest="pcmd")
     psub.add_parser("list")
@@ -675,6 +857,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.cmd == "new":
+        return cmd_new(args)
+    if args.cmd == "add":
+        return cmd_add(args)
     if args.cmd == "profile":
         if args.pcmd == "use":
             return cmd_profile_use(args.name)

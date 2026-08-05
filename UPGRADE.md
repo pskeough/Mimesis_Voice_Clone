@@ -114,6 +114,13 @@ Keep the old folder until the new one is verified.
 ## Step 3 — reinstall
 
 ```bash
+bash install.sh          # Windows: powershell -ExecutionPolicy Bypass -File install.ps1
+```
+
+That does Steps 3 and 4 together for every profile that has a corpus but no
+store, and it is safe to re-run. By hand:
+
+```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
