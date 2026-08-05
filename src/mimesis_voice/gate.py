@@ -24,6 +24,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import sys
 from concurrent.futures import ThreadPoolExecutor
 import subprocess
 from dataclasses import dataclass, field
@@ -107,7 +108,15 @@ def claude_generate(prompt: str, model: str = "sonnet", timeout: int = 900) -> s
 # --- kit assembly -------------------------------------------------------------
 
 
-def _voice_notes(profile: config.Profile, max_chars: int = 6000) -> str:
+# ~4k tokens. A migrated v6 layers tree lands at 10-11k characters, and the
+# sections an author cares most about (anti-patterns, the format layer) are the
+# ones written last, so a tight cap silently drops exactly the guidance that was
+# hardest to write. The cap exists to stop a pathological file from crowding out
+# the anchors, not to budget a normal one.
+_VOICE_MD_MAX_CHARS = 16000
+
+
+def _voice_notes(profile: config.Profile, max_chars: int = _VOICE_MD_MAX_CHARS) -> str:
     """Read the profile's hand-authored VOICE.md, or "" if absent or still a stub.
 
     Every other line in the rules block is measured from the corpus, so it can
@@ -141,6 +150,13 @@ def _voice_notes(profile: config.Profile, max_chars: int = 6000) -> str:
     if len(" ".join(meat).split()) < 20:
         return ""
     if len(raw) > max_chars:
+        # Say which file and how much, so an author whose guidance stopped being
+        # obeyed can see why instead of concluding the notes do not work.
+        print(
+            f"[mimesis] {profile.slug}: VOICE.md is {len(raw):,} chars, truncating to "
+            f"{max_chars:,}. Sections at the end are being dropped.",
+            file=sys.stderr,
+        )
         raw = raw[:max_chars].rsplit("\n", 1)[0] + "\n[... VOICE.md truncated]"
     return f"## AUTHOR'S OWN CRAFT NOTES (intent the statistics cannot carry)\n\n{raw}"
 
