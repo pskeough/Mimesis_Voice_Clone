@@ -74,6 +74,16 @@ Aim for **~40 pieces** at the length they normally write. `calibrate` prints a
 seriously, since standard deviations from eight pieces are noise and the gate
 inherits that noise.
 
+### Hand-authored notes
+
+`profiles/<voice>/VOICE.md` is the one hand-written slot per voice, and the
+compose loop puts it in front of the measured rules. Everything else is an
+average over the corpus, so it can only express habits that survive averaging.
+Put the things no statistic reaches there: how they open a piece, moves they
+reach for, anti-patterns to avoid even when the fingerprint would pass them.
+A profile still carrying the generated skeleton is treated as having no notes,
+so partial filling is fine and there is no cost to leaving it alone.
+
 ### Split by form, not by topic
 
 One fingerprint computed across short posts and book chapters measures **format**

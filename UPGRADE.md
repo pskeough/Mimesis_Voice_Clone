@@ -74,6 +74,58 @@ Check the reported total against the store itself
 exactly. Then continue from Step 2, treating the recovered `source_documents/`
 as your corpus, and back it up as in Step 1.
 
+### Carry the layers, not only the corpus
+
+Pass `--layers /path/to/v6/layers` as well. v6 composed a voice as
+`core.md + format/<f>.md + domain/<d>.md` and assembled the three at prompt
+time. Mimesis derives its rules from the corpus and keeps exactly one
+hand-authored slot per profile, `profiles/<slug>/VOICE.md`, which the compose
+loop reads and puts in front of the measured rules. The flag folds `core.md`
+and the matching format layer into that file.
+
+Do not skip this. Every rule Mimesis measures is an average over the corpus, so
+it can express habits that survive averaging and nothing else. "Opens by
+reframing the question", "steelman both sides before choosing", "never do this
+even though it would pass the fingerprint" are not recoverable from any
+statistic, and they are usually the part somebody wrote by hand over weeks. The
+corpus can always be re-ingested; the layers cannot be re-derived. An import
+that moves the corpus and drops the layers looks completely successful and has
+thrown away the only irreplaceable artifact in the old install.
+
+Domain layers are not folded in, because a profile is a form and not a subject.
+Copy the ones worth keeping into `VOICE.md` by hand.
+
+### What changed in the tool surface
+
+The MCP tool names are mostly stable, but not entirely, and a workflow written
+against v6 breaks on two of them rather than degrading:
+
+| v6 | Mimesis | note |
+|---|---|---|
+| `get_voice_guide(format, domain)` | `get_voice_guide(voice)` | form is now a profile, not an argument |
+| `retrieve_style_examples(query_text, format, domain, limit)` | `retrieve_style_examples(query_text, limit, voice)` | same |
+| `compose_in_voice(task, format, domain, candidates)` | `compose_in_voice(task, ..., voice)` | same |
+| `score_voice_fidelity(text, format)` | **removed** | the fit check now runs inside `scrub_ai_footprint`, which reports distance, threshold and baseline in one pass |
+| `scrub_ai_footprint(text)` | `scrub_ai_footprint(text, source, voice)` | also runs the fidelity audit when given `source` |
+| — | `retrieve_transform_demos`, `eval_voice`, `record_preference` | new |
+
+If a `CLAUDE.md` or slash command in the old install calls
+`score_voice_fidelity` per candidate, rewrite that step to call
+`scrub_ai_footprint`, which gates and scrubs together. Leaving it produces a
+tool-not-found on every generation.
+
+Two more things bite quietly:
+
+- **The old server keeps answering.** v6 registered under its own name, often
+  `<author>_voice`. Mimesis registers as `mimesis-v2`. Both can be registered at
+  once, and a host that still calls the old name gets the old engine with no
+  error anywhere. Run `claude mcp list`, and
+  `claude mcp remove <old-name> --scope user` once the new one is verified.
+- **Per-format config becomes per-profile.** v6 calibrated one store with a
+  gate per format. Mimesis splits forms into separate profiles, which is why the
+  importer splits by default. Anything in the old config that varied by format
+  now belongs in that profile's own `config.json`.
+
 ---
 
 ## Step 1 — back up the corpus

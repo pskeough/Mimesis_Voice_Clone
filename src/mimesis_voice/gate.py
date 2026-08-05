@@ -107,6 +107,44 @@ def claude_generate(prompt: str, model: str = "sonnet", timeout: int = 900) -> s
 # --- kit assembly -------------------------------------------------------------
 
 
+def _voice_notes(profile: config.Profile, max_chars: int = 6000) -> str:
+    """Read the profile's hand-authored VOICE.md, or "" if absent or still a stub.
+
+    Every other line in the rules block is measured from the corpus, so it can
+    only describe habits that survive averaging. It cannot say "she opens by
+    reframing the question", or "never do this even though it would pass the
+    fingerprint". For an author migrating from a system built on hand-written
+    craft layers, those notes are the one artifact that cannot be regenerated
+    from the corpus, so VOICE.md is where they land and this is what reads them.
+    """
+    path = profile.root / "VOICE.md"
+    try:
+        raw = path.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError):
+        return ""
+    if not raw:
+        return ""
+    # Subtract the skeleton `create_profile` writes, line by line, rather than
+    # pattern-matching for placeholder phrases. Matching phrases misses the
+    # skeleton's own intro paragraph, which is long enough on its own to look
+    # like real content, and every untouched profile then ships two paragraphs
+    # instructing the model to "describe the default register".
+    stub_lines = {
+        ln.strip()
+        for ln in config._voice_md_skeleton(profile.name).splitlines()
+        if ln.strip() and not ln.startswith("# ")
+    }
+    meat = [
+        ln for ln in raw.splitlines()
+        if ln.strip() and not ln.startswith("#") and ln.strip() not in stub_lines
+    ]
+    if len(" ".join(meat).split()) < 20:
+        return ""
+    if len(raw) > max_chars:
+        raw = raw[:max_chars].rsplit("\n", 1)[0] + "\n[... VOICE.md truncated]"
+    return f"## AUTHOR'S OWN CRAFT NOTES (intent the statistics cannot carry)\n\n{raw}"
+
+
 def _rules_block(profile: config.Profile, cal: ScrubCalibration,
                  markup: str = "plain") -> str:
     whitelist = ", ".join(cal.whitelist) if cal.whitelist else "(none)"
@@ -136,7 +174,16 @@ def _rules_block(profile: config.Profile, cal: ScrubCalibration,
     # sl_autocorr1 -2.05 / -1.13 SD. The metric was met and the rhythm got worse.
     # The rule now asks for variation at passage scale, which raises the same
     # statistic without inducing a metronome.
-    return f"""## STYLE RULES FOR {profile.name.upper()}'S VOICE
+    # Hand-authored craft notes, if the author wrote any. Everything else in this
+    # block is measured from the corpus, which means it can only describe habits
+    # that survive being averaged: it cannot say "she opens by reframing the
+    # question" or "never do X even though it would pass the fingerprint". A
+    # migrating author's craft notes are the one artifact that cannot be
+    # regenerated from their writing, so they lead rather than trail the numbers.
+    notes = _voice_notes(profile)
+    preamble = f"{notes}\n\n" if notes else ""
+
+    return f"""{preamble}## STYLE RULES FOR {profile.name.upper()}'S VOICE
 {dash_rule}
 - Target mean sentence length ~{cal.mean_sentence_len:.1f} words, and vary sentence
   length across the piece (stdev above {cal.burstiness_floor:.2f}) by letting whole

@@ -51,6 +51,45 @@ CONFIG_STUB = {
 }
 
 
+def compose_voice_md(layers_dir: Path, fmt: str, author: str) -> str | None:
+    """Fold a v6 ``layers/`` tree into one Mimesis VOICE.md for a given format.
+
+    v6 composed its voice as ``core.md + format/<f>.md + domain/<d>.md`` and
+    assembled the three at prompt time. Mimesis derives its rules from the corpus
+    instead, so it has exactly one hand-authored slot per profile: VOICE.md.
+
+    This matters more than it looks. Everything Mimesis measures is an average
+    over the corpus, which means it can express habits that survive averaging and
+    nothing else. "Opens by reframing the question", "steelman both sides before
+    choosing", "never do X even though it would pass the fingerprint" are not
+    recoverable from any statistic, and they are usually the part an author
+    actually wrote by hand. A migration that moves the corpus and drops the
+    layers silently discards the only irreplaceable artifact in the old install.
+
+    Domain layers are deliberately NOT folded in: they carry topical grounding
+    for one subject area, and a profile is a form rather than a subject. Copy the
+    ones worth keeping into VOICE.md by hand.
+    """
+    core = layers_dir / "core.md"
+    fmt_layer = layers_dir / "format" / f"{fmt}.md"
+    parts: list[str] = []
+    if core.exists():
+        parts.append(core.read_text(encoding="utf-8").strip())
+    if fmt_layer.exists():
+        parts.append(f"# Format layer: {fmt}\n\n"
+                     + fmt_layer.read_text(encoding="utf-8").strip())
+    if not parts:
+        return None
+    header = (
+        f"# {author} — Voice Guide\n\n"
+        f"Hand-authored craft notes carried over from the v6 layers tree "
+        f"({', '.join(p.name for p in (core, fmt_layer) if p.exists())}). These ride "
+        f"alongside the measured fingerprint: the numbers enforce, this supplies the "
+        f"intent no statistic can carry.\n"
+    )
+    return header + "\n" + "\n\n".join(parts) + "\n"
+
+
 def safe_name(name: str) -> str:
     """Filesystem-safe stem. v6 filenames are already tame (post_001), but the
     cookbook stores human titles with slashes and punctuation."""
@@ -114,8 +153,19 @@ def main() -> None:
     ap.add_argument("--slug", required=True, help="base profile slug, e.g. 'jane'")
     ap.add_argument("--out", type=Path, required=True, help="profiles/ root to write into")
     ap.add_argument("--no-split", action="store_true", help="one blended profile instead of one per format")
+    ap.add_argument("--layers", type=Path, default=None,
+                    help="the v6 layers/ directory; folds core.md + format/<f>.md into each VOICE.md")
     ap.add_argument("--dry-run", action="store_true", help="report what would be written, write nothing")
     args = ap.parse_args()
+
+    if args.layers and not args.layers.exists():
+        sys.exit(f"error: no such layers directory: {args.layers}")
+    if not args.layers:
+        guess = args.db.parent.parent / "layers"
+        if guess.exists():
+            print(f"note: {guess} exists but --layers was not passed.")
+            print("      Hand-authored craft notes are the one thing this import cannot")
+            print("      recover from the store. Re-run with --layers to carry them over.\n")
 
     if not args.db.exists():
         sys.exit(f"error: no such file: {args.db}")
@@ -162,6 +212,16 @@ def main() -> None:
         if not cfg_path.exists():
             cfg = dict(CONFIG_STUB, author_name=args.slug)
             cfg_path.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
+
+        if args.layers:
+            fmt = group[0]["format"] if not args.no_split else "general"
+            voice_md = compose_voice_md(args.layers, fmt, args.slug)
+            vm_path = args.out / slug / "VOICE.md"
+            if voice_md and not vm_path.exists():
+                vm_path.write_text(voice_md, encoding="utf-8")
+                print(f"      VOICE.md written from layers (core + format/{fmt})")
+            elif voice_md:
+                print(f"      VOICE.md already exists, left alone; layers not merged")
 
     if args.dry_run:
         print("\ndry run: nothing written")
