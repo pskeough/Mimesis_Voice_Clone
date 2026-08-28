@@ -84,3 +84,15 @@ scripts/write_sections_blind.py
 evals/*/
 !evals/specs_example/
 evals/*.log
+
+# The author-feedback ledger quotes the author's own corpus and his verbatim
+# judgments on drafts. Same rule as profiles/: personal data by construction.
+# The shippable version of the same material is docs/DETECTORS.md, which carries
+# the constructions and the measured rates with no corpus text in it.
+docs/AUTHOR_FEEDBACK.md
+
+# Retired profiles are still profiles: third-party corpora (client manuscripts,
+# their social posts) live here after being taken out of rotation. The
+# `profiles/*` rule above does not cover this directory, and the contents are
+# other people's unpublished writing.
+profiles_disabled/
