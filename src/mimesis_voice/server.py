@@ -173,14 +173,46 @@ def compose_in_voice(
 
     kit = build_kit(task, prof, cal, n_examples=max(1, min(examples, 12)))
     _log_event(prof, "compose", task=task[:300], format=format)
+    # Replaced the Draft A / Draft B protocol 2026-08-28 on blind evidence.
+    #
+    # Four framings were tested on the same brief in three voices, each arm written
+    # by an ISOLATED agent that did not know the other arms existed (an earlier
+    # round where one model wrote every arm produced a result that reversed within
+    # the same evening, which is what the isolation is for). Rank points across the
+    # three voices, lower better:
+    #
+    #   analyse (fixed-slot observation, then write)   5   never below 2nd
+    #   echo    ("echo the rhythm, syntax and stance")  6   won 2 of 3, last in the 3rd
+    #   rules-only (no exemplars at all)                9
+    #   observe ("read them, then set them aside")     10   worst overall
+    #
+    # The six slots are fixed rather than open-ended on the strength of Yang &
+    # Carpuat 2025 (arXiv:2505.00679), where framework-constrained register analysis
+    # beat both plain imitation and open-ended style description. Open-ended
+    # self-description collapses into adjective soup and scores well on trait-based
+    # judges while moving no authorship metric.
     protocol = (
         "## HOW TO PRODUCE THE OUTPUT\n"
-        "Produce TWO labeled drafts:\n"
-        "- DRAFT A (rules only): apply the style rules above; do not lean on the examples.\n"
-        "- DRAFT B (corpus-anchored): also echo the rhythm, syntax, and stance of the "
-        "examples and demos. Never copy four or more consecutive words from them.\n"
-        "Then call scrub_ai_footprint on each draft and fix every flag (no em-dashes). "
-        "Present both with their scrub reports and recommend the stronger one.\n"
+        "Work in two steps.\n\n"
+        "STEP 1. Observe the passages above and fill in these six slots, one line "
+        "each. Report only what you can actually see in them.\n"
+        "  1. SENTENCE LENGTH: typical length, and how much it varies within a paragraph.\n"
+        "  2. CLAUSE STRUCTURE: how clauses join. Subordination, coordination, "
+        "apposition, fragments.\n"
+        "  3. PUNCTUATION INVENTORY: which marks appear and at what frequency, "
+        "including question marks, parentheses, ellipses, semicolons.\n"
+        "  4. STANCE: how present the writer is, how certain, how much is hedged, "
+        "whether they judge what they describe.\n"
+        "  5. CONCRETENESS: what gets named specifically and what stays abstract.\n"
+        "  6. ENDINGS: what the final sentence of a passage does.\n\n"
+        "STEP 2. Write the piece from those six observations. Do not look back at the "
+        "passages while writing, and do not reuse their imagery, subject matter, or "
+        "phrasing. Never copy four or more consecutive words from them.\n\n"
+        "Then call scrub_ai_footprint on the result and fix every flag. The hard "
+        "flags are not style advice: self-explanation, unheeded-reversal, way-simile "
+        "and declarative-rating are constructions the author has rejected by name in "
+        "blind testing, and each is measured at or near zero in his own writing.\n"
+        "Present the six observation lines, the draft, and the scrub report.\n"
         "For a fully autonomous generate-score-rewrite pass, use the CLI: "
         f"mimesis compose {prof.slug} \"{task}\"."
     )
@@ -277,6 +309,175 @@ def record_preference(
             f"It now anchors future compose kits; run `mimesis recalibrate {prof.slug}` after ~5 new accepts."
         )
     return f"Recorded {kind} for voice '{prof.slug}'."
+
+
+# --- gated composition (discriminator on the MCP path) ------------------------
+#
+# compose_in_voice returns a kit and TRUSTS the host model to follow a protocol.
+# That is the whole architecture on this path: no slate, no fingerprint gate, no
+# selection, no repair loop. Every number in README/evals describes gate.compose,
+# which only ever ran on the CLI, and the CLI generator is `claude -p`, so the
+# gate is unavailable whenever that CLI cannot authenticate.
+#
+# These two tools put the real gate on the MCP path with the host model as the
+# generator: compose_slate asks for N genuinely different candidates, and
+# gate_candidates runs the identical scalpel -> analyze -> score -> band-target
+# -> Pareto machinery gate.compose uses, then reports. Same discriminator, no
+# subprocess, no second auth.
+
+
+@mcp.tool(
+    description=(
+        "GATED composition, step 1 of 2. Returns the voice kit plus instructions to write N "
+        "genuinely DIFFERENT candidate drafts (not variations on one draft). Write all N, then "
+        "pass them to gate_candidates, which scores and picks. Use this instead of "
+        "compose_in_voice whenever the output matters: compose_in_voice has no discriminator."
+    )
+)
+def compose_slate(
+    task: str, n: int = 4, examples: int = 5, voice: str | None = None,
+    format: str | None = None,
+) -> str:
+    if not config.is_enabled():
+        return _DISABLED
+    prof, err = _profile(voice)
+    if err:
+        return err
+    if not prof.scrub_path.exists():
+        return f"'{prof.slug}' is not calibrated yet. Run: mimesis calibrate {prof.slug}"
+    cal = ScrubCalibration.load(prof.scrub_path)
+    from .gate import build_kit
+
+    n = max(2, min(int(n), 8))
+    kit = build_kit(task, prof, cal, n_examples=max(1, min(examples, 12)))
+    _log_event(prof, "compose_slate", task=task[:300], format=format, slate=n)
+    protocol = (
+        "## HOW TO PRODUCE THE OUTPUT\n"
+        f"Write {n} SEPARATE candidate drafts of the task above, labeled CANDIDATE 1..{n}.\n"
+        "They must differ from each other in approach, structure, opening move, and stance, "
+        "not in wording. A slate of near-identical drafts measures the base model's prior "
+        "instead of the author's range, and the gate reports that as slate collapse.\n"
+        "Do not self-edit toward the rules while drafting; the gate scores what you wrote.\n"
+        "Never copy four or more consecutive words from the examples.\n"
+        f"Then call gate_candidates(candidates=[...all {n} texts...], task=..., "
+        f"voice='{prof.slug}') and report its ranking. Do NOT pick a winner yourself "
+        "before the gate runs."
+    )
+    return kit + "\n\n" + protocol
+
+
+@mcp.tool(
+    description=(
+        "GATED composition, step 2 of 2. Scores a slate of candidate drafts through the real "
+        "gate: deterministic em-dash scalpel, full scrub analysis, 13-feature fingerprint "
+        "distance, band-mode target (aims at the author's self-baseline, NOT the corpus "
+        "centroid), Pareto front over voice-fit and hard flags, and slate-spread collapse "
+        "detection against the author's own corpus spread. Returns a ranked table, the "
+        "surviving front, and the winner's repair instructions."
+    )
+)
+def gate_candidates(
+    candidates: list[str], task: str | None = None, voice: str | None = None,
+    select: str = "band", source: str | None = None,
+) -> str:
+    if not config.is_enabled():
+        return _DISABLED
+    prof, err = _profile(voice)
+    if err:
+        return err
+    if not prof.scrub_path.exists():
+        return f"'{prof.slug}' is not calibrated yet. Run: mimesis calibrate {prof.slug}"
+    texts = [t for t in (candidates or []) if t and t.strip()]
+    if not texts:
+        return "No candidates given."
+    from . import gate as gate_mod
+    from .gate import Candidate
+    from .textnorm import guess_format
+
+    cal = ScrubCalibration.load(prof.scrub_path)
+    if not prof.fingerprint_path.exists():
+        return f"'{prof.slug}' has no fingerprint. Run: mimesis calibrate {prof.slug}"
+    fp = Fingerprint.load(prof.fingerprint_path)
+    pres = (
+        presence_mod.PresenceCalibration.load(prof.presence_path)
+        if getattr(prof, "presence_path", None) and prof.presence_path.exists()
+        else presence_mod.PresenceCalibration.default()
+    )
+
+    markup = guess_format(task or texts[0])
+    allow = gate_mod._allow_dashes(cal)
+    mode = (select or "band").lower()
+
+    cands: list[Candidate] = []
+    for t in texts:
+        # Scalpel first, then score. The scalpel is deterministic, so scoring the
+        # pre-scalpel text would rank a candidate on characters the gate is about
+        # to remove anyway.
+        fixed, n_em = scrub_mod.scalpel(t, fmt=markup, allow_dashes=allow)
+        rmsz, zs = fp.distance_detail(fixed)
+        c = Candidate(text=fixed, rmsz=rmsz, zs=zs, emdash_fixed=n_em)
+        # source is the DOCUMENT being rewritten, if this is a rewrite. Never the
+        # brief: numbers in a brief ("about 350 words") are not facts the draft
+        # owes back, and a fidelity flag is HARD, so a brief-induced one fires on
+        # every candidate and flattens the Pareto front's second axis.
+        c.scrub = scrub_mod.analyze(fixed, cal, source=source, fp=fp, pres=pres)
+        cands.append(c)
+
+    threshold = fp.fit_threshold if fp.fit_threshold > 0 else fp.self_baseline * 1.6
+    passing = [c for c in cands if c.rmsz <= threshold]
+    front = gate_mod._pareto_front(passing or cands)
+    front = sorted(front, key=lambda c: gate_mod._target_distance(c.rmsz, fp, mode))
+    winner = front[0]
+
+    spread = gate_mod.slate_spread(cands, fp)
+    corpus_spread = float(fp.meta.get("corpus_spread") or 0.0)
+
+    out: list[str] = []
+    out.append(f"# GATE REPORT - {prof.name} ({prof.slug}), select={mode}")
+    out.append(
+        f"self_baseline={fp.self_baseline:.3f}  fit_threshold(p95)={threshold:.3f}  "
+        f"corpus_spread={corpus_spread:.3f}"
+    )
+    out.append("")
+    out.append("| # | words | RMS-z | target-dist | hard flags | banned | em-dash fixed | presence |")
+    out.append("|---|-------|-------|-------------|------------|--------|---------------|----------|")
+    for i, c in enumerate(cands, 1):
+        r = c.scrub
+        hf = ",".join(r.hard_flags) if r and r.hard_flags else "-"
+        banned = len((r.banned_words or []) + (r.banned_phrases or [])) if r else 0
+        pres_ok = "MISSING" if (r and getattr(r, "presence_missing", False)) else "ok"
+        mark = "  <-- winner" if c is winner else ""
+        out.append(
+            f"| {i}{mark} | {len(c.text.split())} | {c.rmsz:.3f} | "
+            f"{gate_mod._target_distance(c.rmsz, fp, mode):.3f} | {hf} | {banned} | "
+            f"{c.emdash_fixed} | {pres_ok} |"
+        )
+    out.append("")
+    out.append(
+        f"passing fit gate: {len(passing)}/{len(cands)}   Pareto front: {len(front)}   "
+        f"winner: candidate {cands.index(winner) + 1}"
+    )
+    if corpus_spread > 0:
+        pct = 100.0 * spread / corpus_spread
+        verdict = "COLLAPSED" if pct < 70 else ("tight" if pct < 90 else "ok")
+        out.append(
+            f"slate spread: {spread:.3f} vs author corpus {corpus_spread:.3f} "
+            f"({pct:.0f}% of the author's own variety), {verdict}"
+        )
+        if pct < 70:
+            out.append(
+                "  Candidates prompted to differ landed in the same place. That sameness is "
+                "the base model's prior, and no gate can add variety that was never "
+                "generated. Re-slate with a genuinely different brief per candidate."
+            )
+    out.append("")
+    out.append("## WINNER SCRUB REPORT")
+    out.append(scrub_mod.render(winner.scrub, prof.name) if winner.scrub else "(none)")
+    _log_event(
+        prof, "gate", task=(task or "")[:300] or None, slate=len(cands),
+        winner_rmsz=round(winner.rmsz, 4), spread=round(spread, 4), select=mode,
+    )
+    return "\n".join(out)
 
 
 def main() -> None:

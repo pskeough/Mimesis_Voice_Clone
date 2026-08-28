@@ -340,6 +340,7 @@ framed as authenticity and QA. No cloud anything.
 
 ## License
 
-Apache-2.0, see `LICENSE`. Design rationale in `docs/DESIGN.md`, cadence
-evidence in `evals/CADENCE_FINDINGS.md`, upgrade campaign in `evals/REPORT.md`,
-and the operating guide for Claude Code in `CLAUDE.md`.
+Apache-2.0, see `LICENSE`. Design rationale in `docs/DESIGN.md`, the rhetorical
+detectors and how to recalibrate them for your own corpus in `docs/DETECTORS.md`,
+cadence evidence in `evals/CADENCE_FINDINGS.md`, upgrade campaign in
+`evals/REPORT.md`, and the operating guide for Claude Code in `CLAUDE.md`.

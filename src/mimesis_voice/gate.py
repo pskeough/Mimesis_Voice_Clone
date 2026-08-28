@@ -196,6 +196,45 @@ def _rules_block(profile: config.Profile, cal: ScrubCalibration,
     # question" or "never do X even though it would pass the fingerprint". A
     # migrating author's craft notes are the one artifact that cannot be
     # regenerated from their writing, so they lead rather than trail the numbers.
+    # Sentence openers. The fingerprint is order-invariant and cannot see this at
+    # all: a draft can match every length statistic while opening thirty
+    # consecutive sentences with "He". Generated text sits far below the author's
+    # own floor -- one gated generation ran 20% distinct openers against a 25th
+    # percentile of 54% for the same author's corpus.
+    #
+    # Phrased as the MECHANISM, not the statistic, and that distinction is the
+    # whole point. "Vary how sentences begin" is the same shape of instruction as
+    # the old burstiness advisory, which asked for a number and got a metronome.
+    # Fronting a phrase before the subject raises opener variety as a side effect
+    # of a habit the author already has, which is harder to satisfy mechanically.
+    # Emitted only when actually measured; an un-recalibrated profile keeps its
+    # existing kit verbatim rather than receiving a rule built from defaults.
+    # Emitted only when fronting is a DISTINGUISHING habit, not merely present.
+    # A/B on two voices, one slate each:
+    #   creative, author fronts 71%: arm A 39% -> arm B 58%, fingerprint 1.05 -> 1.00.
+    #     The rule closed a real gap and voice fit improved.
+    #   research, author fronts 48%: arm A already 62% -> arm B 71%. The rule pushed
+    #     PAST the author, landing on his creative rate, in a register with less room
+    #     for fronted phrases. Nothing needed fixing and the rule overrode the target.
+    # 60% is the line between "this author leans on fronting" and "this is ordinary
+    # English word order". Below it, naming the habit adds nothing and invites the
+    # same over-application the old burstiness advisory produced.
+    opener_rule = ""
+    if (cal.n_opener_pieces >= 10 and cal.opener_fronted_p50 >= 0.60):
+        pct = round(cal.opener_fronted_p50 * 100)
+        top = round(cal.opener_top_p75 * 100)
+        opener_rule = (
+            f"\n- Roughly {pct}% of {profile.name}'s sentences put something before the\n"
+            f"  subject: a prepositional phrase, a participle, an adverb, an appositive,\n"
+            f"  or an inversion. Write that way, at about that rate. {pct}% is a target,\n"
+            f"  not a floor: pushing well past it reads as mannered inversion, which is a\n"
+            f"  different tell rather than a fix. Openings should vary because the syntax\n"
+            f"  varies, not because you are rotating first words to avoid a repeat. Do not\n"
+            f"  shuffle openings to hit a ratio and do not swap pronouns for names: both\n"
+            f"  produce the number without the habit. No single opening word should carry\n"
+            f"  more than about {top}% of the sentences."
+        )
+
     notes = _voice_notes(profile)
     preamble = f"{notes}\n\n" if notes else ""
 
@@ -206,7 +245,7 @@ def _rules_block(profile: config.Profile, cal: ScrubCalibration,
   passages run long or stay short. Do NOT alternate long and short line by line:
   that hits the number while making the rhythm mechanical, which is the opposite
   of the goal.
-- Keep hedging under {cal.hedge_ceiling:.2f} per 200 words; prefer definite verbs.
+- Keep hedging under {cal.hedge_ceiling:.2f} per 200 words; prefer definite verbs.{opener_rule}
 - Do not use these AI-tell words: {banned}
 - {profile.name} naturally uses these, so they are allowed: {whitelist}
 - Preserve every fact, number, and citation from the task exactly. Invent nothing."""
@@ -613,7 +652,15 @@ def compose(
         fixed, n_em = scalpel(text, fmt=markup, allow_dashes=_allow_dashes(cal))
         r, zs = _score(textnorm.to_prose(fixed, markup), fp)
         c = Candidate(text=fixed, rmsz=r, zs=zs, emdash_fixed=n_em)
-        c.scrub = analyze(fixed, cal, source=task, fp=fp)
+        # The fidelity audit compares against the DOCUMENT being rewritten, which
+        # is `source`, never the brief. Passing `task` made every number in a
+        # brief a fact the draft had to reproduce: "about 350 words" raised a HIGH
+        # fidelity-number flag on all four candidates of a fresh generation. That
+        # is not a cosmetic false positive. Fidelity is a HARD flag and hard-flag
+        # count is the second Pareto axis, so a constant flag across the slate
+        # flattens that axis and collapses the front to pure RMS-z ranking, which
+        # is the centroid-seeking behaviour the front exists to prevent.
+        c.scrub = analyze(fixed, cal, source=source, fp=fp)
         if source:
             c.fid = fidelity.verify(source, fixed, fmt=markup)
         return c
@@ -731,7 +778,7 @@ def compose(
                 model=model,
             )
             r_fixed, r_em = scalpel(repaired, fmt=markup, allow_dashes=_allow_dashes(cal))
-            r_rep = analyze(r_fixed, cal, source=task, fp=fp)
+            r_rep = analyze(r_fixed, cal, source=source, fp=fp)
             r_fid = fidelity.verify(source, r_fixed, fmt=markup) if source else None
             r_rmsz = _score(textnorm.to_prose(r_fixed, markup), fp)[0]
             # Accept the repair only if it reduced hard flags AND either cleared them
@@ -801,7 +848,10 @@ def compose(
                     chosen.text = d_fixed
                     chosen.emdash_fixed += d_em
                     chosen.rmsz, chosen.zs = _score(textnorm.to_prose(d_fixed, markup), fp)
-                    chosen.scrub = analyze(d_fixed, cal, source=task)
+                    # fp= so the final rendered report still carries the two-sided
+                    # fit check; without it the detector-rewrite path silently
+                    # returned a report that could only see AI tells.
+                    chosen.scrub = analyze(d_fixed, cal, source=source, fp=fp)
                     chosen.fid = d_fid
                     chosen.detector = d_det
                     notes.append(

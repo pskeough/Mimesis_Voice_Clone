@@ -24,6 +24,18 @@ the same day, so these are not hypothetical:
    middle of the sentence; an LLM asked to sound reflective often does exactly this, as a
    substitute for the reflection actually landing in what came before it.
 
+2b. **Self-rating clause.** The expository sibling of (2). A finding is stated, then a clause
+   rates how much the finding matters: "The raters did not keep the two constructs apart, and
+   this is the strongest objection available to a reader of our released data." The first clause
+   reports; the second tells the reader how to weigh it. Deleting the second costs no
+   information, which is the test for whether a clause is doing this rather than adding a fact.
+   Added 2026-08-13 after the author flagged it unprompted in a paper draft ("super AI-y"),
+   where eleven instances had survived a full AI-tell scrub, a fingerprint check and two prose
+   passes -- none of its words are on any banned list. Rule (2) misses it because that pattern
+   requires a first-person reaction verb and this construction has none. Measured base rate on
+   1.16M words of published papers: 0.032 per 1k. Calibration set and the informative-clause
+   negatives that must NOT fire are in `tests/test_rhetoric.py`.
+
 3. **Scene-then-flat-absence-punch.** A sentence or two of setup followed immediately by
    a short, flat declarative naming an ending or an absence: "That man is gone." This is a
    near relative of the AI-tell structure this project already bans in `CORE_VOICE.md`
@@ -142,6 +154,77 @@ def find_meta_asides(text: str) -> list[str]:
     return [m.group(0).strip(", ") for m in _META_ASIDE_RE.finditer(text)]
 
 
+# --- 2b. self-rating clause (the expository sibling of the meta aside) ---------
+
+# find_meta_asides above catches the narrative form, which needs an explicit first-person
+# reaction verb: ", which is the part I like". Expository prose does the same move without one.
+# It states a finding, then appends a clause rating how much the finding matters:
+#
+#   "The raters did not keep the two constructs apart, and this is the strongest objection
+#    available to a reader of our released data."
+#   "Its practical consequence is unchanged and is the point worth keeping: ..."
+#   "One category is worth separating out because three measurements agree about it."
+#
+# The first clause reports; the second tells the reader how to weigh it. Deleting the second
+# costs no information, which is the test for whether a clause is doing this. Flagged because
+# it is dense in model output and near-absent in the authors' own corpora, and because it
+# survives every vocabulary-level scrub: none of its words are on any banned list.
+#
+# Deliberately NOT matched: clauses that add a fact rather than a rating
+# ("which is why the CI spans [0.42, 1.00]", "which is the figure carrying the parity claim").
+# The discriminator is an evaluative head, not the back-reference itself.
+
+_RATING_HEAD = (
+    r"(?:strongest|weakest|biggest|largest|single most|most \w+|best|worst|"
+    r"point worth \w+|thing worth \w+|worth (?:noting|stating|separating|keeping|emphasi[sz]ing)|"
+    r"key (?:point|finding|result|insight)|central (?:point|claim|finding)|"
+    r"crucial|essential|the whole point|precisely (?:why|what)|exactly (?:why|what)|"
+    r"real (?:point|finding|question)|important (?:point|thing)|"
+    r"the reason (?:to|why|this)|most (?:encouraging|troubling|striking|important|valuable)|"
+    # "and this is the more consequential point" -- flagged 2026-08-28, not covered
+    # by any head above.
+    r"(?:more|less) \w+ point|consequential(?: point)?)"
+)
+
+# The first-person register of the same move, flagged 2026-08-28 as a "SUPER BAD
+# Claude AI tell": the narrator announcing how the reader should take the next
+# sentence. _SELF_RATING_RE above is expository and needs an evaluative head;
+# these need none, because the announcement IS the tell.
+_FIRST_PERSON_META_RE = re.compile(
+    r"\b(?:I want to be clear|I should say|let me be clear|to be clear|"
+    r"I'll be honest|I will be honest|I should note|I want to note|"
+    r"I am not being clever|I mean this literally)\b",
+    re.IGNORECASE,
+)
+
+_SELF_RATING_RE = re.compile(
+    # ", and this is the strongest ..."  /  ", which is precisely why ..."
+    rf"(?:,\s*(?:and\s+)?(?:this|that|it|which)\s+(?:is|was)\s+(?:the\s+|a\s+|an\s+)?{_RATING_HEAD}"
+    # "... and is the point worth keeping"
+    rf"|\band\s+(?:is|was)\s+the\s+{_RATING_HEAD}"
+    # sentence-initial "This is the single most ..." / "That is the whole point"
+    rf"|(?:^|(?<=[.!?])\s+)(?:This|That|It)\s+(?:is|was)\s+(?:the\s+|a\s+|an\s+)?{_RATING_HEAD}"
+    # "X is worth separating out because ..."
+    rf"|\bis\s+worth\s+(?:separating|noting|stating|keeping|emphasi[sz]ing)\b"
+    # "... are the most encouraging thing here" / "the single most valuable extension of this work"
+    rf"|\b(?:is|are|was|were)\s+the\s+(?:single\s+)?most\s+\w+\s+\w+\s+"
+    rf"(?:here|yet|available|of this (?:work|paper|study)|in this (?:work|paper|study))\b"
+    # "This is the effect the paper is about" -- rating by pointing at the paper's own subject
+    rf"|\b(?:this|that|it)\s+(?:is|was)\s+(?:the|what)\s+[\w\s]{{0,25}}?"
+    rf"(?:this|the)\s+(?:paper|work|study|section)\s+(?:is|was)\s+about\b)",
+    re.IGNORECASE,
+)
+
+
+def find_self_ratings(text: str) -> list[str]:
+    """A clause that rates the importance of the claim it is attached to.
+
+    Returns the offending span, not the whole sentence, so a caller can see exactly what to cut.
+    """
+    return ([m.group(0).strip(", ") for m in _SELF_RATING_RE.finditer(text)]
+            + [m.group(0).strip() for m in _FIRST_PERSON_META_RE.finditer(text)])
+
+
 # --- 3. scene-then-flat-absence-punch ------------------------------------------
 
 _ABSENCE_PUNCH_RE = re.compile(
@@ -196,10 +279,19 @@ class RhetoricReport:
     leakage: list[str] = field(default_factory=list)
     triads: list[str] = field(default_factory=list)
     meta_asides: list[str] = field(default_factory=list)
+    self_ratings: list[str] = field(default_factory=list)
     absence_punches: list[tuple[str, str]] = field(default_factory=list)
     clefts: list[str] = field(default_factory=list)
     antithesis: list[str] = field(default_factory=list)
     closing_flourish: list[str] = field(default_factory=list)
+    reversals: list[str] = field(default_factory=list)
+    self_explanations: list[str] = field(default_factory=list)
+    way_similes: list[str] = field(default_factory=list)
+    declarative_ratings: list[str] = field(default_factory=list)
+    nominalization_pickups: list[str] = field(default_factory=list)
+    it_is_openers: list[str] = field(default_factory=list)
+    it_is_rate: float = 0.0
+    it_is_p95: float = 0.0
     cleft_rate: float = 0.0
     antithesis_rate: float = 0.0
     cleft_p95: float = 0.0
@@ -227,15 +319,43 @@ class RhetoricReport:
         return self.antithesis_p25 > 0.05 and self.antithesis_rate < self.antithesis_p25
 
     @property
+    def it_is_over(self) -> bool:
+        """p95 == 0 means the author does not open sentences this way at all, so
+        any use is over his rate. Guarding on p95 > 0 the way the cleft and
+        antithesis checks do would disable this exactly where it is most wanted:
+        the research profile measures median 0.00 and p95 0.00, and that is the
+        voice he objected to it in."""
+        return self.it_is_rate > self.it_is_p95
+
+    @property
     def hard_flags(self) -> list[str]:
         """Leakage is unambiguous (the model breaking character) and gates like an
         em-dash. The three tics are real but each has a nonzero measured false-positive
         rate against real prose, so they are advisory -- see render()."""
-        return ["task-leakage"] if self.leakage else []
+        flags = ["task-leakage"] if self.leakage else []
+        # Presence-based and HARD, unlike the rated tics. The author has never
+        # asked for this one to be tolerated at any rate.
+        if self.reversals:
+            flags.append("unheeded-reversal")
+        # Hard on presence at his measured rate of 0.14-0.41 per 1000 words. The
+        # pickup form is advisory: loosest definition, highest corpus rate.
+        if self.self_explanations:
+            flags.append("self-explanation")
+        # Both measured at or near zero in his own corpora, so there is no
+        # rate of his to stay under and presence is the right gate.
+        if self.way_similes:
+            flags.append("way-simile")
+        if self.declarative_ratings:
+            flags.append("declarative-rating")
+        return flags
 
     @property
     def is_clean(self) -> bool:
-        return not (self.leakage or self.triads or self.meta_asides
+        return not (self.leakage or self.reversals or self.self_explanations
+                    or self.way_similes or self.declarative_ratings
+                    or self.nominalization_pickups or self.it_is_over
+                    or self.triads or self.meta_asides
+                    or self.self_ratings
                     or self.absence_punches or self.closing_flourish
                     or self.cleft_over or self.antithesis_over
                     or self.cleft_under or self.antithesis_under)
@@ -253,9 +373,18 @@ def analyze(text: str, cal: "RhetoricCalibration | None" = None) -> RhetoricRepo
         clefts=find_clefts(text),
         antithesis=find_antithesis(text),
         closing_flourish=find_closing_flourish(text),
+        reversals=find_reversals(text),
+        self_explanations=find_self_explanations(text),
+        way_similes=find_way_similes(text),
+        declarative_ratings=find_declarative_ratings(text),
+        nominalization_pickups=find_nominalization_pickups(text),
+        it_is_openers=find_it_is_openers(text),
+        it_is_rate=it_is_opener_rate(text),
+        it_is_p95=cal.it_is_p95,
         leakage=find_leakage(text),
         triads=find_triads(text),
         meta_asides=find_meta_asides(text),
+        self_ratings=find_self_ratings(text),
         absence_punches=find_absence_punches(text),
     )
 
@@ -291,6 +420,58 @@ def _render_new(rep: "RhetoricReport") -> list[str]:
 
 def render_lines(rep: RhetoricReport) -> list[str]:
     out = _render_new(rep)
+    for span in rep.way_similes:
+        out.append(
+            f"- [HIGH] Borrowed simile: \"{span}\". \"the way a X does\" is the "
+            f"generating model's default lyric comparison, measured at up to 157x this "
+            f"author's rate. Cut it or replace it with something seen rather than likened."
+        )
+    for span in rep.declarative_ratings:
+        out.append(
+            f"- [HIGH] Declarative rating: \"{span}\". A sentence that grades the "
+            f"previous one by pointing at it. Delete it and let the previous sentence "
+            f"carry its own weight."
+        )
+    for span in rep.self_explanations:
+        out.append(
+            f"- [HIGH] Self-explanation: \"{span}\". The clause narrates what the "
+            f"sentence just did instead of letting it land. His most-repeated complaint, "
+            f"named in every draft of the 2026-08-28 blind set. Delete the clause; the "
+            f"sentence before it already said this."
+        )
+    for sent in rep.nominalization_pickups:
+        out.append(
+            f"- [MEDIUM] Nominalization pickup: \"{sent}\". A verb from the first half "
+            f"returns as an abstract subject in the second. Keep the verb, cut the noun."
+        )
+    if rep.it_is_over:
+        out.append(
+            f"- [MEDIUM] \"It is/was\" sentence openers: {rep.it_is_rate:.1f} per 100 "
+            f"sentences vs this author's {rep.it_is_p95:.1f} (95th pct). A placeholder "
+            f"subject where a real one was available."
+        )
+    for pair in rep.reversals:
+        out.append(
+            f"- [HIGH] Unheeded reversal: \"{pair[:150]}\". A flat assertion taken back "
+            f"and restated in the next breath. This is the author's single most-repeated "
+            f"complaint (\"say the thing once\"). Delete one half: keep the claim, drop the "
+            f"setup, or keep the setup and let it stand."
+        )
+    # Explicit contrastive connectives, listed even when the rate is under the
+    # author's p95. He uses them himself, so a hard gate would fire on his own
+    # prose and the rate stays the right gate -- but "the rather thans are also
+    # annoying" is a standing complaint, and under-threshold instances were
+    # invisible: the report said nothing at all until the rate was exceeded.
+    # Naming them costs one line and makes a cheap edit available.
+    if not rep.antithesis_over:
+        explicit = [x for x in rep.antithesis
+                    if re.search(r"\b(?:rather\s+than|instead\s+of)\b", x, re.IGNORECASE)]
+        if explicit:
+            out.append(
+                f"- [LOW] Contrastive connectives, under your rate so not gated: "
+                f"{'; '.join(repr(x) for x in explicit[:4])}. Each states a thing by "
+                f"denying its neighbour. Usually cuttable without loss."
+            )
     if rep.leakage:
         out.append(
             f"- [HIGH] Task/instruction leakage: {'; '.join(repr(x) for x in rep.leakage)}. "
@@ -309,9 +490,15 @@ def render_lines(rep: RhetoricReport) -> list[str]:
             f"narrator is rating the sentence instead of the reflection landing in the "
             f"prose itself. Cut the aside or fold the reaction into action."
         )
+    for span in rep.self_ratings:
+        out.append(
+            f"- [MEDIUM] Self-rating clause: \"{span}\". The claim is stated and then "
+            f"rated, telling the reader how much to care instead of letting the claim "
+            f"land. Delete the rating; if nothing is lost, it was doing no work."
+        )
     for setup, punch in rep.absence_punches:
         out.append(
-            f"- [MEDIUM] Scene-then-flat-absence-punch: \"...{setup[-60:]}\" then "
+            f"- [MEDIUM] Scene-then-flat-absence-punch: \"...{setup[-60:]}\" then"
             f"\"{punch}\". A relative of the banned 'Not X. Y.' contrast fragment at "
             f"longer range; earn the ending or cut the punch."
         )
@@ -453,6 +640,9 @@ class RhetoricCalibration:
 
     cleft_p95: float = 0.0
     antithesis_p95: float = 0.0
+    # Sentence openers per 100 sentences. Sharply profile-dependent:
+    # creative p95 5.36, personal 4.55, research 0.00.
+    it_is_p95: float = 0.0
     # Lower edges of the author's own range. A rate check with only a ceiling is
     # half a check: measured on this project, driving antithesis to 0.00 scored as
     # "clean" while being exactly as unlike the author as 19.80, because his own
@@ -507,5 +697,289 @@ def calibrate(texts: list[str], min_words: int = 200) -> RhetoricCalibration:
         antithesis_p95=p95(an, 3.0),
         cleft_p25=pct(cl, 0.25),
         antithesis_p25=pct(an, 0.25),
+        it_is_p95=p95([it_is_opener_rate(t) for t in usable], 0.0),
         n_pieces=len(usable),
     )
+
+
+# --- 9. the unheeded reversal --------------------------------------------------
+#
+# The reference author's most-repeated complaint, on record from 2026-08-11 and
+# reaffirmed under blind review 2026-08-28: a short flat assertion followed by a
+# sentence that takes it back and restates it. His standing instruction is "say
+# the thing once", and unlike every rated tic in this file he has never asked for
+# it to be tolerated at any rate.
+#
+# The specimens, all of which the antithesis detector returned CLEAN on:
+#   "This is not hope. Hope has weight, and this has none."
+#   "The architecture is sound. What it was measuring was too narrow, and that is
+#    a calibration problem, not a design one."
+#   "What troubles me is not that I went quiet. It is that the quiet was comfortable."
+#
+# find_antithesis missed the first two because its is-not-X-It-is-Y pattern
+# requires the second sentence to open with It/That/This followed by "is". A
+# reversal that restates by repeating the noun ("Hope has weight") or by any
+# other verb walks straight through. That is not a rare variant: repeating the
+# noun is the more literary-sounding form, so it is the one a voice-cloning
+# prompt selects for.
+#
+# Detected on SENTENCE PAIRS rather than on a span, because the construction is
+# a relation between two sentences and no single-span regex can see it. Two
+# shapes:
+#
+#   R1 negate-then-restate: S1 negates a predicate, S2 asserts about the same
+#      subject. Requires a shared content word so that "It is not raining. We
+#      should go." does not match.
+#   R2 punchy-then-corrective: S1 is short (<= 9 words) and S2 opens with a
+#      corrective move (But/Yet/What/The problem/Except/Actually/In fact).
+#
+# HARD, not advisory, and presence-based rather than rate-based. Every other tic
+# here is rated because the author uses it at some nonzero rate himself. This one
+# he has never asked to be tolerated at any rate: the instruction was "make sure
+# it's not gonna happen".
+
+# COPULAR negation only. An earlier draft matched every negation including "no
+# money" and "did not answer", and fired on 71-88% of the author's own pieces:
+# ordinary narrative negates constantly. The construction he objects to denies a
+# PREDICATE and then restates it, so "is/was/has not" is the whole surface.
+_NEG_RE = re.compile(
+    r"\b(?:is|are|was|were|has|have|had)\s+not\b"
+    r"|\b(?:isn't|aren't|wasn't|weren't)\b",
+    re.IGNORECASE,
+)
+
+# Openers that mark S2 as a correction of S1 rather than a new thought. But/Yet/
+# Rather/Instead were in the first draft and are ordinary narrative prose: a
+# sentence-initial "But" after a short line is a normal fiction rhythm, and on the
+# reference corpus those four openers alone produced most of the false-positive
+# rate. What remains is assistant-specific. Re-measure before trusting this list
+# on a different author.
+_CORRECTIVE_RE = re.compile(
+    r"^(?:What\s+\w+"
+    r"|The\s+(?:problem|point|question|issue|trouble|difficulty)\s+is"
+    r"|It\s+is\s+that|It's\s+that|It\s+was\s+that|That\s+is\s+what|In\s+fact)\b",
+    re.IGNORECASE,
+)
+
+# The setup half of the construction is short. A long negated sentence followed
+# by a related one is ordinary argument, not the punchy-then-reversal move.
+_REVERSAL_SETUP_MAX_WORDS = 14
+
+_SENT_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+
+# Function words carry no restatement signal: "this", "the", "is" recurring
+# between two sentences means nothing. Only a repeated CONTENT word shows S2 is
+# about S1's subject.
+_STOP = frozenset("""
+a an and are as at be been being but by can could did do does for from had has
+have he her him his how i if in into is it its me my no nor not of on or our out
+she should so some such than that the their them then there these they this those
+to too was we were what when where which who whom why will with would you your
+i'm it's that's there's what's dont don't isnt
+""".split())
+
+
+def _content_words(s: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z']+", s.lower())
+            if len(w) > 2 and w not in _STOP}
+
+
+def find_reversals(text: str) -> list[str]:
+    """Adjacent sentence pairs where the second takes back and restates the first.
+
+    Returns the joined pair so the report can quote the whole construction; a
+    half of it is not recognisable to a reader as the thing being flagged.
+    """
+    sents = [s.strip() for s in _SENT_SPLIT_RE.split(text.strip()) if s.strip()]
+    out: list[str] = []
+    for a, b in zip(sents, sents[1:]):
+        pair = f"{a} {b}"
+        # R1: S1 negates, S2 restates about the same thing. S2 is NOT required to
+        # be free of negation: "This is not hope. Hope has weight, and this has
+        # none." carries one in the restatement, and excluding those dropped the
+        # specimen this detector was written for. The shared content word is what
+        # keeps the pair a restatement rather than two adjacent thoughts.
+        if (_NEG_RE.search(a)
+                and len(a.split()) <= _REVERSAL_SETUP_MAX_WORDS
+                and _content_words(a) & _content_words(b)):
+            out.append(pair)
+            continue
+        # R2: short flat assertion, then a corrective turn.
+        if len(a.split()) <= 9 and _CORRECTIVE_RE.match(b):
+            out.append(pair)
+    return out
+
+
+# --- 10. self-explanation ------------------------------------------------------
+#
+# The single most-repeated complaint of the 2026-08-28 blind session: named in
+# ALL TWELVE drafts across three voices and four generation arms. The author named
+# it four different ways in one sitting: self-explaining the statement within
+# itself; overexplaining and not giving the reader space; explaining and
+# justifying; and too many "X is the Y that" constructions.
+#
+# That it appeared at equal strength in every arm is the finding. The arms varied
+# the instruction and the retrieval; the defect did not move. It is the base
+# model's prior for how a sentence ends, which is why no prompt change reached it
+# and why it has to be caught after generation.
+#
+# One move in three grammatical disguises. A clause arrives at a point, then
+# instead of stopping appends a clause that narrates what the point was:
+#
+#   HINGE           "Each attempt ends there, WHICH MEANS the phone has now asked
+#                    me a genuine philosophical question three times"
+#   IS-WHAT         "No threshold recovers it. THRESHOLDING IS WHAT discards it."
+#   PICKUP          "an afternoon occurred and WAS WITNESSED and that THE
+#                    WITNESSING was mine"
+#
+# Calibration, measured over his three live corpora: 9/9 specimens fire, 0/5
+# controls fire, and his own rate is 0.14 (creative) / 0.28 (personal) / 0.41
+# (research) per 1000 words. The hinge and is-what forms are HARD on presence at
+# that rate. The pickup form carries the loosest definition and the highest
+# corpus rate, so it stays advisory.
+
+_HINGE_RE = re.compile(
+    r",\s*which\s+(?:is|was|means|meant)\b"
+    r"|(?:^|(?<=[.!?])\s+)Which\s+(?:is|was|means)\b",
+    re.IGNORECASE,
+)
+
+# Reverse pseudo-cleft, restricted to a NOMINALIZED subject. The plain-noun form
+# ("X was what killed it") is ordinary emphatic English and appears in the
+# reference corpus; the nominalized form ("Thresholding is what discards it") is
+# the tell. Requiring -ing/-ion/-ment/-ness separates the two without a rate gate,
+# which matters because a rate gate would need a per-author calibration this check
+# does not carry.
+_IS_WHAT_RE = re.compile(
+    r"\b(?:the\s+)?\w{3,}(?:ing|ion|ment|ness)\s+(?:\w+\s+){0,2}?(?:is|was)\s+what\b",
+    re.IGNORECASE,
+)
+
+# \w{3,}? not \w{5,}?: the longer form needs an 8-character word and so missed
+# "the costing nothing", which is the specimen this detector was written for.
+# The len(stem) >= 4 check below is what actually guards against short junk.
+_NOMINAL_RE = re.compile(r"\b(?:the|a|an)\s+(\w{3,}?(?:ing|ion|ment|ness))\b", re.IGNORECASE)
+
+
+def _nom_stem(word: str) -> str:
+    w = word.lower()
+    for suf in ("ing", "ion", "ment", "ness"):
+        if w.endswith(suf) and len(w) - len(suf) >= 4:
+            return w[: -len(suf)]
+    return w
+
+
+def find_nominalization_pickups(text: str) -> list[str]:
+    """A verb used in one clause returning as a nominalized subject in the next.
+
+    "costs me nothing, and the costing nothing is what makes ..." / "was witnessed
+    and that the witnessing was mine". The sentence performs the reader's
+    inference and then hands back the result, which is what he means by a draft
+    that does not give the reader space.
+    """
+    out: list[str] = []
+    for sent in _SENT_SPLIT_RE.split(text):
+        for m in _NOMINAL_RE.finditer(sent):
+            stem = _nom_stem(m.group(1))
+            if len(stem) >= 4 and re.search(rf"\b{re.escape(stem)}\w*\b", sent[: m.start()], re.I):
+                out.append(sent.strip()[:150])
+                break
+    return out
+
+
+def find_self_explanations(text: str) -> list[str]:
+    """Hinge and is-what forms. Hard-gated; see the calibration note above."""
+    return ([m.group(0).strip(", ") for m in _HINGE_RE.finditer(text)]
+            + [m.group(0).strip() for m in _IS_WHAT_RE.finditer(text)])
+
+
+# --- 11. "It is" as a sentence-opening transition ------------------------------
+#
+# "It is carried by the items nobody was arguing about" -- flagged in the research
+# packet, along with the note that "It is" is a transition he dislikes. Rate-gated
+# rather than presence-gated, and profile-dependent, because the measurement says
+# the answer differs sharply by voice. Sentence openers per 100 sentences over his
+# own pieces of 10+ sentences:
+#
+#   creative  median 1.67   p95 5.36   max 6.85
+#   personal  median 0.00   p95 4.55   max 7.02
+#   research  median 0.00   p95 0.00   max 2.63
+#
+# He opens research sentences this way essentially never, and creative ones
+# regularly. A single global threshold would either miss it in research or fire
+# constantly on fiction.
+
+_IT_IS_OPENER_RE = re.compile(r"(?:^|(?<=[.!?])\s+)It\s+(?:is|was)\b")
+
+
+def find_it_is_openers(text: str) -> list[str]:
+    return [m.group(0).strip() for m in _IT_IS_OPENER_RE.finditer(text)]
+
+
+def it_is_opener_rate(text: str) -> float:
+    """Per 100 sentences."""
+    n = len([s for s in _SENT_SPLIT_RE.split(text.strip()) if s.strip()])
+    return 100.0 * len(find_it_is_openers(text)) / n if n else 0.0
+
+
+# --- 12. the borrowed simile ---------------------------------------------------
+#
+# "the way a machine refuses", "the way a stranger turns a wall that is not his",
+# "the way anger does", "the way a tongue returns to a chipped tooth", "the way a
+# patient thing gives when pressed long enough".
+#
+# Confirmed four separate times by two independent methods. A 2026-08-28
+# stylometric pass over 28 prior generations measured it at up to 3.14 per 1000
+# words against his corpus rate of 0.02 -- roughly 157x -- and he then flagged it
+# unprompted in three different blind packets without seeing that measurement.
+# It is the default lyric simile of the generating model, not his.
+#
+# Calibrated: 5/6 specimens fire, 0/5 controls, and his own rate is 0.023
+# (creative) / 0.026 (personal) / 0.000 (research) per 1000 words, touching 2-3%
+# of pieces. The lookahead exclusions carry the fixed idioms, which is where the
+# false positives were: "that is the way it is", "the way back", "showed me the
+# way", "the way he always walked" are all ordinary English and none of them is
+# the simile.
+_WAY_SIMILE_RE = re.compile(
+    r"\bthe\s+way\s+"
+    r"(?!it\s+is\b|back\b|home\b|to\b|out\b|in\b|things\s+are\b"
+    r"|he\s+always\b|she\s+always\b|I\s+always\b)"
+    r"(?:a|an|the|one|you|\w+)\s+[\w\s]{0,28}?"
+    r"\b(?:does|do|did|is|was|are|were|would|will|goes|gets|turns|refuses|gives|"
+    r"stops|falls|moves|works|breaks|holds|sits|looks|sounds|feels|returns|comes|"
+    r"opens|closes|wears|settles|leaves|behaves|responds|answers|waits|bends|"
+    r"slips|drifts|fades)\b",
+    re.IGNORECASE,
+)
+
+
+def find_way_similes(text: str) -> list[str]:
+    """"..., the way a machine refuses." Reaches for a comparison nobody asked for."""
+    return [m.group(0).strip() for m in _WAY_SIMILE_RE.finditer(text)]
+
+
+# --- 13. the declarative rating ------------------------------------------------
+#
+# "That is the part that sat with me." "That is a worse position than not
+# knowing." "That is what tells me the drift is working."
+#
+# The sibling _SELF_RATING_RE cannot see these: it requires an evaluative head
+# from a fixed list (strongest, most X, the whole point), and these rate by
+# pointing rather than by naming a superlative, so no head is present to match.
+# Rejected on sight by the reference author under blind review.
+#
+# Measured at exactly 0.000 per 1000 words across all three of his corpora, which
+# is why this is hard rather than rated: there is no rate of his to stay under.
+_DECLARATIVE_RATING_RE = re.compile(
+    r"(?:^|(?<=[.!?])\s+)(?:That|This|It)\s+(?:is|was)\s+"
+    r"(?:the\s+(?:part|thing|bit|point)\s+(?:that|which)\b"
+    r"|a\s+(?:worse|better|harder|stranger|smaller|larger|different|stronger|"
+    r"weaker|cleaner|simpler)\s+\w+\s+than\b"
+    r"|what\s+(?:tells|makes|matters|counts|does|separates|explains)\b)",
+    re.IGNORECASE,
+)
+
+
+def find_declarative_ratings(text: str) -> list[str]:
+    """A sentence that grades the previous one by pointing at it."""
+    return [m.group(0).strip() for m in _DECLARATIVE_RATING_RE.finditer(text)]

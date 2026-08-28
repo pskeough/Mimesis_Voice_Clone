@@ -155,6 +155,9 @@ class ScrubCalibration:
     # picks them up without a signature change.
     cleft_p95: float = 0.0
     antithesis_p95: float = 0.0
+    # 'It is/was' sentence openers per 100 sentences. Sharply profile-dependent,
+    # so it cannot be a module constant: creative p95 5.36, personal 4.55, research 0.00.
+    it_is_p95: float = 0.0
     # Prose dashes per 1000 words, 95th percentile over the author's own
     # pieces. Zero for an author who does not use them, which is the case a
     # blanket strip-to-zero rule silently assumed for everyone.
@@ -163,6 +166,21 @@ class ScrubCalibration:
     antithesis_p25: float = 0.0
     density_p25: float = 0.0
     specificity_p25: float = 0.0
+    # Sentence-opener habits. The 13-feature fingerprint is order-invariant and
+    # therefore blind to these: a draft can match every length statistic while
+    # opening thirty consecutive sentences with "He". Measured on one author's
+    # blind ranking of five drafts, opener share predicted his ordering 70% of
+    # pairs against 60% for the shipped fingerprint, which tied with a word-count
+    # control. Small sample, but the fingerprint cannot see the dimension at all.
+    #
+    # fronted_p50 is the mechanism rather than the symptom: the share of the
+    # author's sentences that put a phrase before the subject. Variety follows
+    # from that habit instead of being aimed at, which matters because naming a
+    # statistic in the kit is how the old burstiness advisory induced a metronome.
+    opener_distinct_p25: float = 0.0
+    opener_top_p75: float = 0.0
+    opener_fronted_p50: float = 0.0
+    n_opener_pieces: int = 0
 
     def save(self, path: str | Path) -> None:
         Path(path).write_text(
@@ -178,10 +196,15 @@ class ScrubCalibration:
                     "dash_per1k_p95": self.dash_per1k_p95,
                     "cleft_p95": self.cleft_p95,
                     "antithesis_p95": self.antithesis_p95,
+                    "it_is_p95": self.it_is_p95,
                     "cleft_p25": self.cleft_p25,
                     "antithesis_p25": self.antithesis_p25,
                     "density_p25": self.density_p25,
                     "specificity_p25": self.specificity_p25,
+                    "opener_distinct_p25": self.opener_distinct_p25,
+                    "opener_top_p75": self.opener_top_p75,
+                    "opener_fronted_p50": self.opener_fronted_p50,
+                    "n_opener_pieces": self.n_opener_pieces,
                 },
                 indent=2,
             ),
@@ -202,10 +225,20 @@ class ScrubCalibration:
             dash_per1k_p95=d.get("dash_per1k_p95", 0.0),
             cleft_p95=d.get("cleft_p95", 0.0),
             antithesis_p95=d.get("antithesis_p95", 0.0),
+            it_is_p95=d.get("it_is_p95", 0.0),
             cleft_p25=d.get("cleft_p25", 0.0),
             antithesis_p25=d.get("antithesis_p25", 0.0),
             density_p25=d.get("density_p25", 0.0),
             specificity_p25=d.get("specificity_p25", 0.0),
+            # Absent from every calibration written before this field existed.
+            # Zero means "not measured", and the rules block checks
+            # n_opener_pieces before emitting anything, so an old profile keeps
+            # its current kit verbatim rather than being handed a rule derived
+            # from defaults.
+            opener_distinct_p25=d.get("opener_distinct_p25", 0.0),
+            opener_top_p75=d.get("opener_top_p75", 0.0),
+            opener_fronted_p50=d.get("opener_fronted_p50", 0.0),
+            n_opener_pieces=d.get("n_opener_pieces", 0),
         )
 
 
@@ -236,6 +269,77 @@ def author_uses_dashes(cal: "ScrubCalibration") -> bool:
     return cal.dash_per1k_p95 >= AUTHOR_DASH_BAND_MIN
 
 
+# Words that, at the head of a sentence, put something before the subject:
+# prepositions, subordinators, and conjunctive adverbs. Combined with a participle
+# test and an early comma, this approximates "fronted phrase" without a POS tagger.
+_FRONTERS = frozenset("""
+about above across after against along amid among around at before behind below
+beneath beside besides between beyond by despite down during except for from in
+inside into near of off on onto out outside over past since through throughout to
+toward towards under underneath until up upon with within without
+although as because before if once since so that though unless until when
+whenever where whereas wherever while
+""".split())
+
+_OPENER_WORD_RE = re.compile(r"[A-Za-z']+")
+
+
+def _sentence_openers(text: str) -> list[str]:
+    out = []
+    for s in _split_sentences(text):
+        w = _OPENER_WORD_RE.findall(s)
+        if w:
+            out.append(w[0].lower())
+    return out
+
+
+def _is_fronted(sentence: str) -> bool:
+    """Does this sentence put a phrase before its subject?
+
+    Three signals, any one sufficient: it opens with a preposition or
+    subordinator, it opens with a participle (-ing/-ed), or it carries a comma
+    within the first eight words, which is where a fronted phrase closes.
+    Deliberately a heuristic: the number only has to be consistent between the
+    author's corpus and generated text for the comparison to mean something.
+    """
+    w = _OPENER_WORD_RE.findall(sentence)
+    if not w:
+        return False
+    first = w[0].lower()
+    if first in _FRONTERS:
+        return True
+    if len(first) > 4 and (first.endswith("ing") or first.endswith("ed")):
+        return True
+    head = " ".join(w[:8])
+    return "," in sentence[:len(head) + 8]
+
+
+def _opener_stats(text: str) -> tuple[float, float, float] | None:
+    """(distinct ratio, top-opener share, fronted rate) for one piece.
+
+    The distinct ratio is LENGTH-SENSITIVE and must not be compared across texts
+    of different lengths. Ten sentences with ten different openers score 100%;
+    forty sentences almost never do. A 280-word generation scored 100% on all four
+    candidates in one arm, which read as excellence and was a ceiling artifact.
+    Calibration is safe because ingest chunks pieces to a consistent ~180-200
+    words, so the percentiles compare like with like.
+
+    The fronted rate is a per-sentence proportion and does not drift with length.
+    It is the number to trust when comparing a generation against the corpus.
+    """
+    sents = _split_sentences(text)
+    ops = _sentence_openers(text)
+    if len(ops) < 6:
+        return None
+    counts: dict[str, int] = {}
+    for o in ops:
+        counts[o] = counts.get(o, 0) + 1
+    top = max(counts.values()) / len(ops)
+    distinct = len(counts) / len(ops)
+    fronted = sum(1 for s in sents if _is_fronted(s)) / len(sents) if sents else 0.0
+    return distinct, top, fronted
+
+
 def calibrate(texts: list[str], whitelist: list[str] | None = None) -> ScrubCalibration:
     """Calibrate scrub thresholds from corpus pieces.
 
@@ -249,9 +353,17 @@ def calibrate(texts: list[str], whitelist: list[str] | None = None) -> ScrubCali
     dashes_per1k: list[float] = []
     hedges_per200: list[float] = []
     mean_lens: list[float] = []
+    op_distinct: list[float] = []
+    op_top: list[float] = []
+    op_fronted: list[float] = []
     vocab: dict[str, int] = {}
     n = 0
     for text in texts:
+        st = _opener_stats(text)
+        if st:
+            op_distinct.append(st[0])
+            op_top.append(st[1])
+            op_fronted.append(st[2])
         sents = _split_sentences(text)
         sent_lens = [len(_WORD_RE.findall(s)) for s in sents]
         sent_lens = [x for x in sent_lens if x > 0]
@@ -279,9 +391,18 @@ def calibrate(texts: list[str], whitelist: list[str] | None = None) -> ScrubCali
         hedge_ceiling=_percentile(hedges_per200, 95) if hedges_per200 else 1.5,
         dash_per1k_p95=_percentile(dashes_per1k, 95) if dashes_per1k else 0.0,
         mean_sentence_len=_percentile(mean_lens, 50) if mean_lens else 18.0,
+        # Opener habits. A floor on variety and a ceiling on any one opener, both
+        # taken from the author's own spread rather than assumed: some authors
+        # genuinely do open most sentences the same way, and a hardcoded target
+        # would damage their voice in a shipped build.
+        opener_distinct_p25=_percentile(op_distinct, 25) if op_distinct else 0.0,
+        opener_top_p75=_percentile(op_top, 75) if op_top else 0.0,
+        opener_fronted_p50=_percentile(op_fronted, 50) if op_fronted else 0.0,
+        n_opener_pieces=len(op_distinct),
         n_pieces=n,
         cleft_p95=rhet.cleft_p95,
         antithesis_p95=rhet.antithesis_p95,
+        it_is_p95=rhet.it_is_p95,
         cleft_p25=rhet.cleft_p25,
         antithesis_p25=rhet.antithesis_p25,
         density_p25=qual.density_p25,
@@ -398,6 +519,16 @@ class ScrubReport:
             flags.append("fidelity-citation")
         if self.rhetoric and self.rhetoric.leakage:
             flags.append("task-leakage")
+        # The reversal is HARD here too. It is the one rhetorical move the
+        # author has asked to be prevented outright rather than rated.
+        if self.rhetoric and self.rhetoric.reversals:
+            flags.append("unheeded-reversal")
+        if self.rhetoric and self.rhetoric.self_explanations:
+            flags.append("self-explanation")
+        if self.rhetoric and self.rhetoric.way_similes:
+            flags.append("way-simile")
+        if self.rhetoric and self.rhetoric.declarative_ratings:
+            flags.append("declarative-rating")
         return flags
 
     @property
@@ -408,7 +539,8 @@ class ScrubReport:
         burstiness and hedging, not a hard gate. Leakage is different -- see
         hard_flags -- because it is the model breaking character, not a tic."""
         r = self.rhetoric
-        return bool(r and (r.triads or r.meta_asides or r.absence_punches))
+        return bool(r and (r.triads or r.meta_asides or r.self_ratings
+                           or r.absence_punches))
 
     @property
     def presence_missing(self) -> bool:
@@ -491,6 +623,7 @@ def analyze(
         text,
         rhet or rhetoric_mod.RhetoricCalibration(
             cleft_p95=cal.cleft_p95, antithesis_p95=cal.antithesis_p95,
+            it_is_p95=cal.it_is_p95,
             cleft_p25=cal.cleft_p25, antithesis_p25=cal.antithesis_p25,
         ),
     )

@@ -169,18 +169,72 @@ def mmr(
     return selected
 
 
+# One chunk per source document. Five anchors should be five different pieces of
+# his writing, not two slices of one. Measured on the creative profile over seven
+# briefs, share of anchor slots taken by the single most-retrieved document:
+#
+#   diversify=True   cap=inf  23%   cap=2  23% (no-op)   cap=1  17%
+#   diversify=False  cap=inf  43%   cap=2  31%           cap=1  20%
+#
+# and worst-case chunks from one document inside a single brief: 5 -> 2 -> 1.
+#
+# Note what this does NOT fix. The 8.97x over-representation of a single
+# stage-play document, measured across briefs, is cross-brief topical pull: that
+# document is close to many queries, and a per-call cap cannot see that. Cap=1
+# reduces it (23% -> 17%) without addressing the cause, which is retrieval on
+# topic. The register filter is the fix for that.
+_PER_DOC_CAP = 1
+
+
+def _cap_per_document(hits: list[dict], k: int, cap: int = _PER_DOC_CAP) -> list[dict]:
+    """At most ``cap`` chunks from any one source document.
+
+    Chunking has no per-document limit, so document balance and retrieval balance
+    are different distributions. Measured on the creative profile against its seven
+    frozen briefs: three novels (2.6% of documents) own 49.7% of the chunk pool,
+    and a single stage-play document supplied 11.4% of every anchor slot in the
+    system -- 8.97x its share of the pool -- including two of the top five anchors
+    for a philosophical-fragment brief. Novels, half the corpus, got 8.6%.
+
+    MMR does not fix this and never did: measured mean distinct literary forms per
+    anchor set was 3.57 with diversify=True and 3.57 with it off. It diversifies on
+    embedding distance, which is not document identity.
+
+    A second pass backfills rather than returning short, so a query whose best
+    material genuinely lives in one document still gets ``k`` anchors.
+    """
+    picked, counts = [], defaultdict(int)
+    for h in hits:
+        fn = h.get("filename") or h["id"].split("::")[0]
+        if counts[fn] < cap:
+            picked.append(h)
+            counts[fn] += 1
+        if len(picked) >= k:
+            return picked
+    seen = {id(h) for h in picked}
+    for h in hits:
+        if len(picked) >= k:
+            break
+        if id(h) not in seen:
+            picked.append(h)
+    return picked
+
+
 def retrieve(
     query_text: str,
     limit: int,
     profile: config.Profile,
     diversify: bool = True,
     exclude_files: set[str] | None = None,
+    per_doc_cap: int = _PER_DOC_CAP,
 ) -> list[dict]:
     """Fused recall then MMR diversification. Returns up to ``limit`` clean hits."""
     fused = hybrid(query_text, max(limit * 3, limit), profile, exclude_files=exclude_files)
-    chosen = (
-        mmr(query_text, fused, limit, profile.embed_backend) if diversify else fused[:limit]
+    ranked = (
+        mmr(query_text, fused, max(limit * 3, limit), profile.embed_backend)
+        if diversify else fused
     )
+    chosen = _cap_per_document(ranked, limit, per_doc_cap)
     for h in chosen:
         h.pop("_vec", None)
     return chosen
@@ -204,11 +258,67 @@ def _load_pairs(path: Path) -> list[dict]:
     return pairs
 
 
-def transform_demos(query_text: str, k: int, profile: config.Profile) -> list[dict]:
-    """Contrastive AI->author rewrite pairs closest in style to the query.
+# Every pair in pairs.jsonl already carries a ``move``: which rhetorical slot of a
+# paper it belongs to. The research briefs carry a ``genre`` field whose vocabulary
+# matches that move vocabulary exactly. Nothing used either: ranking was pure
+# embedding cosine to the human side, which is topical.
+#
+# Topical selection is the documented worst case for exemplars. Wang et al. 2025
+# (arXiv:2509.14543, 400+ authors, 40k+ generations) ablated it directly and found
+# content-similarity exemplar selection performs SUBSTANTIALLY WORSE than random
+# same-author selection: CCAT50 89.72 -> 81.05, Enron 69.33 -> 36.00, blogs 43.93
+# -> 22.13. Retrieving a limitations paragraph when writing a limitations paragraph
+# is the obvious alternative and, as far as a 2026-08-28 literature sweep found,
+# has never been published. This is that experiment.
+_MOVE_KEYWORDS = {
+    "abstract": ("abstract",),
+    "gap_statement": ("gap", "understudied", "unexplored"),
+    "motivation": ("motivat", "why this matters"),
+    "related_work": ("related work", "prior work", "literature review"),
+    "contribution_statement": ("contribution", "we contribute"),
+    "methods": ("method", "procedure", "protocol", "we ran", "design"),
+    "methods_procedure": ("procedure", "step by step"),
+    "methods_notation": ("notation", "formal", "we define"),
+    "results": ("result", "we find", "we found", "finding"),
+    "results_reporting": ("report the", "reporting"),
+    "interpretation": ("interpret", "what this means", "explain the"),
+    "discussion": ("discussion", "discuss"),
+    "discussion_implications": ("implication", "what follows"),
+    "limitations": ("limitation", "caveat", "threat to validity", "we did not"),
+    "conclusion": ("conclusion", "conclude", "in closing"),
+    "figure_caption": ("figure", "caption"),
+    "table_description": ("table",),
+    "reviewer_response": ("reviewer", "rebuttal", "response to"),
+}
 
-    Returns [] when the profile ships no ``pairs.jsonl``. Ranking is by similarity
-    of the query to each pair's human (author) side under the profile backend.
+
+def infer_move(task: str) -> str | None:
+    """Which rhetorical slot a brief is asking for, or None when it does not say.
+
+    Deliberately keyword-based rather than a model call: this runs inside kit
+    assembly on every compose, and a wrong guess costs a worse demo rather than a
+    wrong answer. Longest keyword wins so "methods_procedure" beats "methods".
+    """
+    low = (task or "").lower()
+    best, best_len = None, 0
+    for move, keys in _MOVE_KEYWORDS.items():
+        for kw in keys:
+            if kw in low and len(kw) > best_len:
+                best, best_len = move, len(kw)
+    return best
+
+
+def transform_demos(query_text: str, k: int, profile: config.Profile,
+                    move: str | None = None) -> list[dict]:
+    """Contrastive AI->author rewrite pairs for the query.
+
+    When ``move`` is given (or inferable from the query), pairs carrying that move
+    are ranked ahead of the rest, and the remainder backfills to ``k`` by style
+    similarity. The corpus is small -- 26 research pairs over 18 moves, so most
+    moves hold one or two -- which is exactly why this is a re-ranking rather than
+    a filter: an exact-match filter would usually return fewer demos than asked for.
+
+    Returns [] when the profile ships no ``pairs.jsonl``.
     """
     if not profile.pairs_path or not profile.pairs_path.exists():
         return []
@@ -218,5 +328,14 @@ def transform_demos(query_text: str, k: int, profile: config.Profile) -> list[di
     human_vecs = embed.encode([p["human_text"] for p in pairs], backend=profile.embed_backend)
     qv = embed.embed_one(query_text, backend=profile.embed_backend)
     sims = human_vecs @ qv
-    order = np.argsort(-sims)[: max(1, k)]
+
+    want = move or infer_move(query_text)
+    if want:
+        # Rank matched pairs first, each block still ordered by similarity.
+        matched = [i for i, p in enumerate(pairs) if p.get("move") == want]
+        rest = [i for i in np.argsort(-sims) if i not in set(matched)]
+        matched.sort(key=lambda i: -sims[i])
+        order = (matched + list(rest))[: max(1, k)]
+    else:
+        order = np.argsort(-sims)[: max(1, k)]
     return [pairs[i] for i in order]

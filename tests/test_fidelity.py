@@ -253,3 +253,30 @@ def test_the_real_failure_is_caught():
     axes = {f.axis for f in rep.hard}
     for expected in ("scaffold", "structure", "house-style", "rhythm", "register"):
         assert expected in axes, f"{expected} missed\n{fidelity.render(rep)}"
+
+
+# --- the brief is not a source ------------------------------------------------
+
+def test_brief_numbers_do_not_raise_a_fidelity_flag():
+    """gate.compose passed the BRIEF to analyze(source=...), so any number in a
+    task ("about 350 words") became a fact the draft owed back.
+
+    This is not a cosmetic false positive. fidelity-number is a HARD flag, and
+    hard-flag count is the second axis of the Pareto front. A flag that fires on
+    every candidate makes that axis constant, the front collapses to pure RMS-z
+    ranking, and selection reverts to the centroid-seeking behaviour the front
+    was added to prevent. One number in a brief silently disabled half the gate.
+    """
+    from mimesis_voice.scrub import ScrubCalibration, analyze
+
+    cal = ScrubCalibration(banned_words=[], banned_phrases=[], whitelist=[],
+                           burstiness_floor=5.0, hedge_ceiling=1.0, mean_sentence_len=18.0)
+    brief = "A short reflective piece, about 350 words, about waiting on a package."
+    draft = ("The truck has not moved in eleven days. I check the page before the "
+             "kettle and again while the water goes, and learn nothing either time.")
+
+    assert analyze(draft, cal, source=None).hard_flags == []
+    # A real rewrite source still audits: a number dropped from the DOCUMENT is a
+    # genuine finding, and this test must not license skipping fidelity entirely.
+    doc = "The truck has not moved in eleven days, across 350 miles of nothing."
+    assert "fidelity-number" in analyze(draft, cal, source=doc).hard_flags
