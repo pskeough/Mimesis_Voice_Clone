@@ -81,7 +81,7 @@ Mimesis/
     example/                # checked-in template: config.json, VOICE.md guide skeleton, empty source_documents/
     (patrick voices live here locally, gitignored)
   docs/DESIGN.md            # this file
-  scripts/register-mcp.ps1 / .sh   # adds server to claude mcp config as 'mimesis-v2' (does NOT touch existing 'mimesis')
+  scripts/register-mcp.ps1 / .sh   # adds server to claude mcp config as 'mimesis' (refuses to overwrite one pointing elsewhere)
 ```
 
 ## Profile model
@@ -120,7 +120,7 @@ rather than voice.
 
 ## MCP integration
 
-Server name `mimesis-v2` during transition, so an existing `mimesis` registration keeps working until cutover. The global CLAUDE.md voice protocol continues to work unchanged after cutover because tool names are identical (plus new `eval_voice`).
+Server name was `mimesis-v2` during the transition from v1, so an existing `mimesis` registration kept working until cutover; since October 2026 the installer registers `mimesis` and retires `mimesis-v2`. The global CLAUDE.md voice protocol continues to work unchanged after cutover because tool names are identical (plus new `eval_voice`).
 
 ## Eval acceptance bar (before claiming done)
 

@@ -11,6 +11,41 @@ Hand this file to Claude Code in the Mimesis folder:
 
 ---
 
+## From a Mimesis install made before October 2026
+
+The short version, for an install that already runs this repo:
+
+```bash
+git pull
+bash install.sh                    # Windows: powershell -ExecutionPolicy Bypass -File install.ps1
+mimesis ingest <you> --force       # once per voice; --force is required, see below
+mimesis calibrate <you>
+mimesis doctor <you>
+```
+
+What changed and why each step is needed:
+
+- **Two ingest bugs are fixed, and both need `--force`.** A paragraph longer than
+  the chunk cap that followed a short paragraph made the chunker stop reading
+  the document: one 124,123-word book was stored as 897 words. And YAML front
+  matter in `.md` exports (date, url, likes) was stored as prose in every piece.
+  `ingest` skips an unchanged corpus by hash, so without `--force` the old,
+  truncated store stays.
+- **The MCP server is registered as `mimesis`.** Earlier installs registered
+  `mimesis-v2`. The installer removes the old name when it points at this folder
+  and registers the new one. Start a new Claude Code session afterwards, and
+  update any `CLAUDE.md` or slash command that names `mimesis-v2` tools.
+- **`calibrate` now also writes the structure bands and the second detector
+  family's rates** (`structure_calibration.json`, `rhetoric_ext_calibration.json`).
+  Policy you set by hand on the second family (`--dash-zero`, `--disable`,
+  `--hard`, `--demote`) is kept across rebuilds.
+- **New commands:** `mimesis inspect PATH` (look at a corpus before building),
+  `mimesis purity NAME` (rank pieces that read machine-written), `mimesis new
+  --author`. **New MCP tools:** `list_voices`, `inspect_corpus`, `create_voice`.
+  `compose_slate` now defaults to two candidates written from opposed briefs.
+
+---
+
 ## Read this first: it is a rebuild, not a migration
 
 There is no schema version and no migration code in this project, by design.
@@ -117,7 +152,7 @@ tool-not-found on every generation.
 Two more things bite quietly:
 
 - **The old server keeps answering.** v6 registered under its own name, often
-  `<author>_voice`. Mimesis registers as `mimesis-v2`. Both can be registered at
+  `<author>_voice`. Mimesis registers as `mimesis`. Both can be registered at
   once, and a host that still calls the old name gets the old engine with no
   error anywhere. Run `claude mcp list`, and
   `claude mcp remove <old-name> --scope user` once the new one is verified.
@@ -186,6 +221,9 @@ download:
   backend is visibly underperforming.
 - `pip install -e ".[detect]"` — perplexity-ratio detector signal, reporting
   only.
+- `pip install -e ".[structure]"` then `python -m spacy download en_core_web_sm`
+  — the tagger behind the opener line of the structure report. Small (~50 MB,
+  no torch); the installer adds it unless given `--no-structure`.
 
 Stay on the default `fast` backend (bge-small, ONNX, no torch) unless you have
 a reason not to.
@@ -195,12 +233,13 @@ a reason not to.
 ## Step 4 — rebuild the profile
 
 ```bash
-mimesis ingest <you>
+mimesis ingest <you> --force
 mimesis calibrate <you>
 ```
 
-`ingest` re-chunks `source_documents/` into the store and hash-skips anything
-unchanged. `calibrate` recomputes `fingerprint.json` and
+`ingest --force` re-chunks `source_documents/` into the store even when the
+corpus is unchanged. Without `--force` it hash-skips an unchanged corpus, which
+would keep a store built by an older chunker. `calibrate` recomputes `fingerprint.json` and
 `scrub_calibration.json` from that store.
 
 Check the self-baseline that `calibrate` prints. It is a leave-one-out distance
@@ -214,7 +253,7 @@ rather than one blended fingerprint that measures format instead of voice.
 ## Step 5 — verify
 
 ```bash
-mimesis compose <you> --task "a short paragraph about how your week went"
+mimesis compose <you> "a short paragraph about how your week went"
 python scripts/portability_audit.py <you>
 ```
 
@@ -238,11 +277,13 @@ that is a code fix, not something to work around in your config.
 So Claude Code picks up the new build:
 
 ```bash
-mimesis-mcp --help          # confirm the entry point resolves
-claude mcp list             # confirm 'mimesis' is registered and pointing here
+bash scripts/register-mcp.sh        # Windows: powershell -File scripts\register-mcp.ps1
+claude mcp list                     # confirm 'mimesis' is registered and pointing here
 ```
 
-If the path moved in Step 2, re-register it so it points at the new folder.
+The script replaces a `mimesis` registration that points at this folder, removes
+an old `mimesis-v2` one, and refuses to overwrite a `mimesis` that points
+somewhere else. Start a new Claude Code session afterwards so the tools load.
 
 ---
 
