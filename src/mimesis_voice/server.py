@@ -1,15 +1,22 @@
 """FastMCP stdio server exposing the Mimesis voice tools.
 
-Tools: ``get_voice_guide``, ``retrieve_style_examples``, ``retrieve_transform_demos``,
-``compose_in_voice``, ``scrub_ai_footprint``, ``eval_voice``. Registered as
-``mimesis-v2`` (the v1 ``mimesis`` server is left untouched during transition).
+Setup: ``list_voices``, ``inspect_corpus``, ``create_voice``.
+Writing: ``compose_slate`` + ``gate_candidates`` (gated), ``compose_in_voice``
+(kit only), ``get_voice_guide``, ``retrieve_style_examples``,
+``retrieve_transform_demos``.
+Checking and learning: ``scrub_ai_footprint``, ``eval_voice``, ``record_preference``.
 
-Inside an MCP host the *host model* is the generator, so ``compose_in_voice``
-returns a corpus-anchored composition kit and directs the Draft A / Draft B +
-scrub workflow, exactly like v1. The autonomous generate-score-rewrite loop
-(``gate.compose``) is the headless path, driven by ``mimesis compose`` on the CLI.
-The active voice and on/off state resolve on every call, so ``/voice use`` and
-``/voice-off`` take effect with no restart.
+Registered with Claude Code as ``mimesis`` by ``scripts/register-mcp.*``.
+
+Inside an MCP host the *host model* is the generator, so the compose tools
+return a corpus-anchored kit and a protocol, and ``gate_candidates`` runs the
+same discriminator ``gate.compose`` uses on the CLI. The active voice and on/off
+state resolve on every call, so ``/voice use`` and ``/voice-off`` take effect
+with no restart.
+
+Until the person has a built voice of their own, every writing tool returns the
+intake protocol instead of a kit. The shipped ``example`` voice is a demo, and
+answering "write this in my voice" from it is the failure this guards against.
 """
 from __future__ import annotations
 
@@ -20,12 +27,17 @@ from fastmcp import FastMCP
 
 from . import accepted as accepted_mod
 from . import config, evalcli, retrieve
+from . import intake as intake_mod
+from . import harvest as harvest_mod
 from . import presence as presence_mod
+from . import rhetoric_ext as rhetoric_ext_mod
 from . import scrub as scrub_mod
+from .measures import calibration as structure_mod
+from .measures import report as structure_report
 from .fingerprint import Fingerprint
 from .scrub import ScrubCalibration
 
-mcp = FastMCP("mimesis-v2")
+mcp = FastMCP("mimesis")
 
 
 def _log_event(profile, tool: str, **fields) -> None:
@@ -49,17 +61,54 @@ _DISABLED = (
 )
 
 
+SETUP_PROTOCOL = """NO VOICE IS SET UP FOR THIS PERSON YET.
+Mimesis has only its synthetic demo voice, so nothing here can write in their voice.
+Do not imitate their style from memory or from this conversation. Run the intake with them:
+
+1. Ask what they want written in their voice and in which forms (emails, social posts,
+   essays, fiction, academic papers). Each form becomes its own voice, named like
+   jane-posts and jane-essays, because one fingerprint across forms measures format.
+2. Ask where their writing is: folders or files of .txt, .md, .docx or .pdf. Target about
+   40 pieces or 20,000 words per form; 5,000 words is the floor. Only writing they produced
+   alone: nothing co-written, nothing heavily edited by someone else, nothing drafted with
+   AI. Ask about AI-assisted pieces directly, since recent work is often mixed.
+   Exports: Google Docs -> .docx; sent email -> paste bodies into .txt files;
+   LinkedIn/Substack/Medium exports -> one .txt or .md per post.
+3. Call inspect_corpus(paths=[...]) and go through every warning with them.
+4. Call create_voice(name=..., paths=[...], author="Their Name"). For a very large corpus,
+   run `mimesis new NAME --from PATH --author "Their Name"` in the Mimesis folder instead.
+5. Ask the VOICE.md questions in the repo's CLAUDE.md ("First run") and write their answers
+   into profiles/NAME/VOICE.md.
+Then retry the original request with voice=NAME."""
+
+
 def _profile(voice: str | None):
-    """Resolve a named voice for one call, or the active one."""
+    """Resolve a named voice for one call, or the active one.
+
+    Returns (profile, None) or (None, message). The message is the intake
+    protocol whenever the person has no built voice and did not ask for the
+    demo by name.
+    """
     if voice:
         p = config.resolve_named(voice)
         if p is None:
-            return None, (
-                f"No voice profile '{voice}'. Available: "
-                f"{', '.join(config.list_profiles()) or '(none)'}."
-            )
+            msg = (f"No voice profile '{voice}'. Available: "
+                   f"{', '.join(config.list_profiles()) or '(none)'}.")
+            return None, (msg + "\n\n" + SETUP_PROTOCOL) if config.needs_setup() else msg
+        if p.slug != config.EXAMPLE_SLUG and not config.is_built(p.slug):
+            return None, (f"Voice '{p.slug}' exists but is not built. "
+                          f"Run create_voice again or: mimesis add {p.slug}")
         return p, None
-    return config.resolve_active(), None
+    if config.needs_setup():
+        return None, SETUP_PROTOCOL
+    p = config.resolve_active()
+    if p.slug == config.EXAMPLE_SLUG:
+        built = [s for s in config.user_voices() if config.is_built(s)]
+        return None, (
+            "The active voice is the synthetic demo. This person's voices: "
+            f"{', '.join(built)}. Pass voice=NAME, or run `mimesis profile use NAME`."
+        )
+    return p, None
 
 
 def _rules(profile) -> str | None:
@@ -153,9 +202,12 @@ def retrieve_transform_demos(query_text: str, k: int = 4, voice: str | None = No
     description=(
         "THE primary tool for writing anything in the active author's voice. Returns the "
         "style rules, the most relevant real example passages (MMR-diversified), any "
-        "transform demos, and a Draft A (rules-only) / Draft B (corpus-anchored) protocol. "
-        "Produce both drafts, run scrub_ai_footprint on each, then present them. Pass "
-        "voice=NAME to target a profile, format=NAME for a format cell."
+        "transform demos, a structure block saying what this kind of passage must accomplish "
+        "(when the profile has a guidance pack), and a fixed-slot observe-then-write protocol. "
+        "Follow the protocol, run scrub_ai_footprint, then present. Pass voice=NAME to target a "
+        "profile, format=MOVE (e.g. discussion, related_work, abstract) to name the rhetorical "
+        "slot when the task text does not. No discriminator: when the output matters use "
+        "compose_slate + gate_candidates. If no voice is set up, returns the intake protocol."
     )
 )
 def compose_in_voice(
@@ -171,7 +223,7 @@ def compose_in_voice(
     cal = ScrubCalibration.load(prof.scrub_path)
     from .gate import build_kit
 
-    kit = build_kit(task, prof, cal, n_examples=max(1, min(examples, 12)))
+    kit = build_kit(task, prof, cal, n_examples=max(1, min(examples, 12)), fmt=format)
     _log_event(prof, "compose", task=task[:300], format=format)
     # Replaced the Draft A / Draft B protocol 2026-08-28 on blind evidence.
     #
@@ -207,11 +259,16 @@ def compose_in_voice(
         "  6. ENDINGS: what the final sentence of a passage does.\n\n"
         "STEP 2. Write the piece from those six observations. Do not look back at the "
         "passages while writing, and do not reuse their imagery, subject matter, or "
-        "phrasing. Never copy four or more consecutive words from them.\n\n"
+        "phrasing. Never copy four or more consecutive words from them.\n"
+        "If the kit carries a WHAT THIS PASSAGE MUST DO block, it sets what the piece "
+        "includes and in what order; the six observations set how every sentence is "
+        "built. Satisfy the block as content and sequence, never as added sentences, "
+        "and leave out any slot the task gives you nothing for.\n\n"
         "Then call scrub_ai_footprint on the result and fix every flag. The hard "
         "flags are not style advice: self-explanation, unheeded-reversal, way-simile "
-        "and declarative-rating are constructions the author has rejected by name in "
-        "blind testing, and each is measured at or near zero in his own writing.\n"
+        "and declarative-rating are machine constructions a reader rejected by name in "
+        "blind testing, each measured at or near zero in the human corpora they were "
+        "checked against (docs/DETECTORS.md).\n"
         "Present the six observation lines, the draft, and the scrub report.\n"
         "For a fully autonomous generate-score-rewrite pass, use the CLI: "
         f"mimesis compose {prof.slug} \"{task}\"."
@@ -250,9 +307,16 @@ def scrub_ai_footprint(text: str, source: str | None = None, voice: str | None =
         if getattr(prof, "presence_path", None) and prof.presence_path.exists()
         else presence_mod.PresenceCalibration.default()
     )
-    rep = scrub_mod.analyze(text, cal, source=source, fp=fp, pres=pres)
+    rep = scrub_mod.analyze(text, cal, source=source, fp=fp, pres=pres,
+                            ext=rhetoric_ext_mod.load_for(prof))
     _log_event(prof, "scrub", text_sha=hashlib.sha1(text.encode("utf-8")).hexdigest()[:12], chars=len(text))
-    return scrub_mod.render(rep, prof.name)
+    # Keep the draft itself, not only its hash. Every draft produced before this
+    # existed had to be recovered from Claude Code transcripts by `mimesis harvest`.
+    harvest_mod.record_draft(
+        prof, text, "scrub",
+        verdict=",".join(rep.hard_flags) if getattr(rep, "hard_flags", None) else "clean",
+    )
+    return "\n".join([scrub_mod.render(rep, prof.name), _structure_block(prof, text)])
 
 
 @mcp.tool(
@@ -311,6 +375,27 @@ def record_preference(
     return f"Recorded {kind} for voice '{prof.slug}'."
 
 
+def _structure_block(prof, text: str) -> str:
+    """The structural report for one draft, or a line saying why there is none.
+
+    Reporting only. Every line is a band fitted to the author's own corpus, and
+    a two-sigma band flags a twentieth of his real writing by arithmetic; see
+    docs/STRUCTURE_GATES.md for the measured per-line rate on each voice.
+    """
+    return structure_report.render(text, structure_mod.load_for(prof), prof.name)
+
+
+def _structure_flags(cal, text: str) -> str:
+    """The flagged line names for one candidate, for the ranking table."""
+    if cal is None:
+        return "-"
+    try:
+        hits = [ln.key for ln in structure_report.analyse(text, cal) if ln.flagged]
+    except Exception:
+        return "-"
+    return ",".join(hits) if hits else "ok"
+
+
 # --- gated composition (discriminator on the MCP path) ------------------------
 #
 # compose_in_voice returns a kit and TRUSTS the host model to follow a protocol.
@@ -329,13 +414,14 @@ def record_preference(
 @mcp.tool(
     description=(
         "GATED composition, step 1 of 2. Returns the voice kit plus instructions to write N "
-        "genuinely DIFFERENT candidate drafts (not variations on one draft). Write all N, then "
-        "pass them to gate_candidates, which scores and picks. Use this instead of "
-        "compose_in_voice whenever the output matters: compose_in_voice has no discriminator."
+        "candidate drafts (default 2) from deliberately OPPOSED structural briefs. Write all N, "
+        "then pass them to gate_candidates, which scores and picks. Use this instead of "
+        "compose_in_voice whenever the output matters: compose_in_voice has no discriminator. "
+        "Always pass voice=NAME."
     )
 )
 def compose_slate(
-    task: str, n: int = 4, examples: int = 5, voice: str | None = None,
+    task: str, n: int = 2, examples: int = 5, voice: str | None = None,
     format: str | None = None,
 ) -> str:
     if not config.is_enabled():
@@ -349,16 +435,22 @@ def compose_slate(
     from .gate import build_kit
 
     n = max(2, min(int(n), 8))
-    kit = build_kit(task, prof, cal, n_examples=max(1, min(examples, 12)))
+    kit = build_kit(task, prof, cal, n_examples=max(1, min(examples, 12)), fmt=format)
     _log_event(prof, "compose_slate", task=task[:300], format=format, slate=n)
     protocol = (
         "## HOW TO PRODUCE THE OUTPUT\n"
         f"Write {n} SEPARATE candidate drafts of the task above, labeled CANDIDATE 1..{n}.\n"
-        "They must differ from each other in approach, structure, opening move, and stance, "
-        "not in wording. A slate of near-identical drafts measures the base model's prior "
-        "instead of the author's range, and the gate reports that as slate collapse.\n"
+        f"Before drafting, choose {n} structural approaches that are opposed rather than "
+        "adjacent (lead with the claim vs lead with the case; scene first vs argument first; "
+        "chronological vs problem first) and commit one candidate to each. Measured over about "
+        "twenty gated sections: four candidates written off one brief covered 19-55% of the "
+        "author's own variety and the gate reported COLLAPSED every time; two written off "
+        "opposed briefs covered 86-148% and passed. A slate of near-identical drafts measures "
+        "the base model's prior, not the author's range.\n"
         "Do not self-edit toward the rules while drafting; the gate scores what you wrote.\n"
         "Never copy four or more consecutive words from the examples.\n"
+        "If the kit carries a WHAT THIS PASSAGE MUST DO block, every candidate satisfies it "
+        "as content and order; the candidates differ in how they get there, not in whether.\n"
         f"Then call gate_candidates(candidates=[...all {n} texts...], task=..., "
         f"voice='{prof.slug}') and report its ranking. Do NOT pick a winner yourself "
         "before the gate runs."
@@ -420,7 +512,8 @@ def gate_candidates(
         # brief: numbers in a brief ("about 350 words") are not facts the draft
         # owes back, and a fidelity flag is HARD, so a brief-induced one fires on
         # every candidate and flattens the Pareto front's second axis.
-        c.scrub = scrub_mod.analyze(fixed, cal, source=source, fp=fp, pres=pres)
+        c.scrub = scrub_mod.analyze(fixed, cal, source=source, fp=fp, pres=pres,
+                                    ext=rhetoric_ext_mod.load_for(prof))
         cands.append(c)
 
     threshold = fp.fit_threshold if fp.fit_threshold > 0 else fp.self_baseline * 1.6
@@ -439,8 +532,15 @@ def gate_candidates(
         f"corpus_spread={corpus_spread:.3f}"
     )
     out.append("")
-    out.append("| # | words | RMS-z | target-dist | hard flags | banned | em-dash fixed | presence |")
-    out.append("|---|-------|-------|-------------|------------|--------|---------------|----------|")
+    # Structure lines are REPORTED per candidate and never scored into the
+    # ranking. They measure construction, and the study that produced them found
+    # construction and voice moving in opposite directions under a fine-tune, so
+    # a candidate must not lose the front for being architecturally unlike the
+    # author when the reader might prefer exactly that.
+    struct_cal = structure_mod.load_for(prof)
+    struct = [_structure_flags(struct_cal, c.text) for c in cands]
+    out.append("| # | words | RMS-z | target-dist | hard flags | banned | em-dash fixed | presence | structure |")
+    out.append("|---|-------|-------|-------------|------------|--------|---------------|----------|-----------|")
     for i, c in enumerate(cands, 1):
         r = c.scrub
         hf = ",".join(r.hard_flags) if r and r.hard_flags else "-"
@@ -450,7 +550,7 @@ def gate_candidates(
         out.append(
             f"| {i}{mark} | {len(c.text.split())} | {c.rmsz:.3f} | "
             f"{gate_mod._target_distance(c.rmsz, fp, mode):.3f} | {hf} | {banned} | "
-            f"{c.emdash_fixed} | {pres_ok} |"
+            f"{c.emdash_fixed} | {pres_ok} | {struct[i - 1]} |"
         )
     out.append("")
     out.append(
@@ -473,11 +573,116 @@ def gate_candidates(
     out.append("")
     out.append("## WINNER SCRUB REPORT")
     out.append(scrub_mod.render(winner.scrub, prof.name) if winner.scrub else "(none)")
+    out.append(_structure_block(prof, winner.text))
     _log_event(
         prof, "gate", task=(task or "")[:300] or None, slate=len(cands),
         winner_rmsz=round(winner.rmsz, 4), spread=round(spread, 4), select=mode,
     )
+    # A slate is the cheapest preference signal this system gets: the gate has
+    # already labelled winner and losers, so persisting all of them costs nothing
+    # and yields a ranked pair per loser.
+    for c in cands:
+        harvest_mod.record_draft(
+            prof, c.text, "gate", task=task,
+            verdict="winner" if c is winner else "loser",
+        )
     return "\n".join(out)
+
+
+# --- setup ---------------------------------------------------------------------
+
+
+@mcp.tool(
+    description=(
+        "List this person's voices: name, author, document count, whether it is built, which "
+        "one is active, and whether voice mode is on. Call it first in a new session, or when "
+        "unsure which voice= to pass. If they have no voice yet, it returns the intake protocol "
+        "for setting one up from their writing."
+    )
+)
+def list_voices() -> str:
+    config.ensure_profiles()
+    st = config.read_state()
+    lines = [f"Voice mode: {'ON' if st['enabled'] else 'OFF'}   active: {st.get('active') or '(none)'}"]
+    for slug in config.list_profiles():
+        cfg = config.load_profile_config(slug)
+        prof = config.resolve(slug)
+        try:
+            n_docs = sum(1 for f in prof.source_dir.iterdir()
+                         if f.is_file() and f.suffix.lower() in config.SUPPORTED_EXTS)
+        except OSError:
+            n_docs = 0
+        tag = " (synthetic demo)" if slug == config.EXAMPLE_SLUG else ""
+        state = "built" if config.is_built(slug) else "NOT BUILT"
+        lines.append(f"  {slug:<22} {cfg['author_name']:<24} {n_docs:>4} docs  {state}{tag}")
+    if config.needs_setup():
+        lines += ["", SETUP_PROTOCOL]
+    return "\n".join(lines)
+
+
+@mcp.tool(
+    description=(
+        "Inspect folders or files of a person's writing BEFORE building a voice from them. "
+        "Reads every .txt/.md/.docx/.pdf the way ingest will and reports piece count, words, "
+        "length bands, and problems: too little writing, short posts mixed with long chapters, "
+        "one document that would dominate, PDFs with no extractable text, unsupported exports. "
+        "Writes nothing. Paths are absolute, or relative to the Mimesis folder."
+    )
+)
+def inspect_corpus(paths: list[str]) -> str:
+    if not paths:
+        return "Pass paths=[...]: folders or files of the person's own writing."
+    return intake_mod.render(intake_mod.inspect([str(x) for x in paths]))
+
+
+@mcp.tool(
+    description=(
+        "Build a new voice from a person's own writing: copies every supported document under "
+        "the given folders/files into profiles/NAME, ingests, calibrates, and makes it the "
+        "active voice if no real voice was active. Run inspect_corpus first and resolve its "
+        "warnings with the person. Refuses a corpus under the word floor unless force=True. "
+        "Takes seconds to a few minutes; the first run downloads a small embedding model."
+    )
+)
+def create_voice(name: str, paths: list[str], author: str | None = None, force: bool = False) -> str:
+    import argparse
+    import contextlib
+    import io
+
+    from . import cli
+
+    if not name or not paths:
+        return "Pass name='jane-essays' and paths=[...] (folders or files of their writing)."
+    slug = config.slugify(name)
+    if slug == config.EXAMPLE_SLUG:
+        return "'example' is reserved for the demo voice. Pick another name."
+    args = argparse.Namespace(
+        name=name, sources=[str(x) for x in paths], author=author,
+        backend="fast", no_build=False, force=bool(force),
+    )
+    buf = io.StringIO()
+    # stdout is the MCP transport. Anything the CLI prints must go to the buffer,
+    # or the JSON-RPC stream is corrupted mid-call.
+    with contextlib.redirect_stdout(buf):
+        try:
+            rc = cli.cmd_new(args)
+        except Exception as e:  # report, never kill the server
+            print(f"create_voice failed: {type(e).__name__}: {e}")
+            rc = 1
+    # Per-document ingest progress is noise to the agent reading this; keep the
+    # import, store, calibration and warning lines.
+    out = "\n".join(
+        ln for ln in buf.getvalue().splitlines()
+        if not ln.startswith("Processing: ") and " paragraphs (" not in ln
+    ).strip()
+    if rc == 0 and config.is_built(slug):
+        out += (
+            f"\n\nVoice '{slug}' is built. Next: ask the VOICE.md questions (CLAUDE.md, "
+            f"'First run') and write the answers into profiles/{slug}/VOICE.md, then write a "
+            f"short test piece with compose_slate(voice='{slug}') + gate_candidates and ask "
+            "them whether it sounds like them."
+        )
+    return out or f"create_voice returned {rc} with no output."
 
 
 def main() -> None:

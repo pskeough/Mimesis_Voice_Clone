@@ -2,8 +2,10 @@
 
 Subcommands::
 
-    mimesis new NAME [--from PATH ...] [--backend fast|style] [--no-build]
+    mimesis inspect PATH ...      # look at a corpus before building; writes nothing
+    mimesis new NAME [--from PATH ...] [--author "Full Name"] [--backend fast|style] [--no-build] [--force]
     mimesis add NAME --from PATH ... [--no-build]
+    mimesis purity NAME [--top N] # rank corpus pieces that read machine-written
     mimesis profile list|use NAME|new NAME [--backend fast|style]
     mimesis ingest [NAME] [--force]
     mimesis calibrate [NAME]
@@ -27,9 +29,13 @@ from pathlib import Path
 from . import accepted as accepted_mod
 from . import composite as composite_mod
 from . import config, evalcli, gate, ingest
+from . import intake as intake_mod
 from . import scrub as scrub_mod
 from . import presence as presence_mod
+from . import rhetoric_ext as rhetoric_ext_mod
 from . import fingerprint as fingerprint_mod
+from .measures import calibration as structure_mod
+from .measures import report as structure_report
 from .fingerprint import calibrate as fp_calibrate
 from .fingerprint import calibrate_weighted, recency_weights
 
@@ -83,6 +89,8 @@ def cmd_profile_use(name: str) -> int:
         return 1
     config.write_state(active=slug)
     print(f"Active voice: {slug}")
+    if not config.is_built(slug):
+        print(f"  (not built yet: mimesis add {slug})")
     return 0
 
 
@@ -117,28 +125,9 @@ def _flatten_name(path: Path, root: Path) -> str:
 
 def _collect(sources: list[str]) -> tuple[list[tuple[Path, Path]], dict[str, int]]:
     """Resolve --from arguments to (file, walk-root) pairs, plus a skip tally."""
-    found: list[tuple[Path, Path]] = []
-    skipped: dict[str, int] = {}
-    for raw in sources:
-        src = Path(raw).expanduser()
-        if not src.exists():
-            print(f"  ! no such path, skipped: {src}")
-            continue
-        if src.is_file():
-            if src.suffix.lower() in config.SUPPORTED_EXTS:
-                found.append((src, src.parent))
-            else:
-                skipped[src.suffix.lower() or "(no extension)"] = \
-                    skipped.get(src.suffix.lower() or "(no extension)", 0) + 1
-            continue
-        for p in sorted(src.rglob("*")):
-            if not p.is_file():
-                continue
-            ext = p.suffix.lower()
-            if ext in config.SUPPORTED_EXTS:
-                found.append((p, src))
-            else:
-                skipped[ext or "(no extension)"] = skipped.get(ext or "(no extension)", 0) + 1
+    found, skipped, missing = intake_mod.collect(sources)
+    for m in missing:
+        print(f"  ! no such path, skipped: {m}")
     return found, skipped
 
 
@@ -196,14 +185,39 @@ def _build(prof: config.Profile) -> int:
     return cmd_calibrate(prof.slug)
 
 
+def cmd_inspect(args) -> int:
+    rep = intake_mod.inspect(args.sources)
+    print(intake_mod.render(rep))
+    return 1 if intake_mod.verdict(rep) == "stop" else 0
+
+
+def _activate_if_unclaimed(slug: str) -> None:
+    """Make a freshly built voice the active one unless the person already chose
+    a real voice. Left on the shipped example, every MCP call without voice=
+    would quietly write in the demo voice."""
+    active = config.read_state().get("active")
+    if not active or active == config.EXAMPLE_SLUG or not config.is_built(active):
+        config.write_state(active=slug)
+        print(f"Active voice is now '{slug}'.")
+
+
 def cmd_new(args) -> int:
     slug = config.slugify(args.name)
     if slug in config.list_profiles():
         print(f"Profile '{slug}' already exists. To add documents to it: "
               f"mimesis add {slug} --from PATH")
         return 1
-    prof = config.create_profile(args.name, args.name.replace("-", " ").title(), args.backend)
-    print(f"Created voice '{prof.slug}' (backend={prof.embed_backend}).")
+    if args.sources:
+        rep = intake_mod.inspect(args.sources)
+        for sev, msg in rep.warnings():
+            print(f"[{sev}] {msg}")
+        if intake_mod.verdict(rep) == "stop" and not args.force:
+            print("\nNot creating the voice. Add more writing, or pass --force to build anyway.")
+            print(f"Full report: mimesis inspect {' '.join(args.sources)}")
+            return 1
+    author = (args.author or "").strip() or args.name.replace("-", " ").title()
+    prof = config.create_profile(args.name, author, args.backend)
+    print(f"Created voice '{prof.slug}' for {author} (backend={prof.embed_backend}).")
 
     if args.sources:
         _import_documents(prof, args.sources)
@@ -217,9 +231,12 @@ def cmd_new(args) -> int:
         print(f"\nNot building (--no-build). When ready: mimesis add {prof.slug}")
         return 0
     rc = _build(prof)
-    if rc == 0:
-        print(f"\nVoice '{prof.slug}' is ready. Try:")
+    if rc == 0 and config.is_built(prof.slug):
+        _activate_if_unclaimed(prof.slug)
+        print(f"\nVoice '{prof.slug}' is ready. Next:")
+        print(f"  mimesis purity {prof.slug}        # pieces that read machine-written; remove and rebuild")
         print(f"  mimesis compose {prof.slug} \"a short note about how your week went\"")
+        print(f"  Fill in {prof.root / 'VOICE.md'} with what no statistic sees.")
     return rc
 
 
@@ -238,7 +255,15 @@ def cmd_add(args) -> int:
     # fingerprint is a z-score against corpus means, so any new document moves
     # the baseline and a stale fingerprint.json does not error -- it silently
     # scores every candidate against the wrong writer.
-    return _build(prof)
+    rc = _build(prof)
+    if rc == 0 and config.is_built(prof.slug):
+        _activate_if_unclaimed(prof.slug)
+    return rc
+
+
+def cmd_purity(args) -> int:
+    """Rank corpus pieces by how machine-written they read (both detector families)."""
+    return rhetoric_ext_mod._main(["purity", args.name, "--top", str(args.top)])
 
 
 # --- ingest / calibrate -------------------------------------------------------
@@ -362,7 +387,107 @@ def _report_calibration_confidence(fp, feature_set: str) -> None:
 
 
 
-def _calibrate_composite(prof: config.Profile) -> int:
+def _structure_corpus(prof: config.Profile) -> list[str]:
+    """The author's documents as written, for the structural calibration.
+
+    NOT the store. `ingest.read_pieces` reassembles a document from ~180-word
+    retrieval chunks joined by blank lines, so every "paragraph" in it is one
+    chunk of roughly equal length. Calibrated that way, this repo's creative
+    voice reported an author paragraph CV of 0.06; read from the documents it is
+    a median of 0.58, and the study's nine authors run 0.62-0.95. The store was
+    measuring the chunker.
+
+    `.docx` and `.pdf` go through `extract_paragraphs`, which recovers real
+    paragraphs from their own structure. `.txt` and `.md` are read raw and left
+    to `prose_paragraphs`, because `extract_paragraphs` splits those on blank
+    lines and this repo's own creative corpus separates paragraphs with single
+    newlines.
+    """
+    out: list[str] = []
+    for p in ingest.find_documents(prof.source_dir):
+        try:
+            if p.suffix.lower() in (".txt", ".md"):
+                raw = ingest.clean_text(p.read_text(encoding="utf-8", errors="replace"))
+                if p.suffix.lower() == ".md":
+                    raw = ingest.strip_front_matter(raw)
+                out.append(raw)
+            else:
+                paras = ingest.extract_paragraphs(p)
+                if paras:
+                    out.append("\n\n".join(paras))
+        except Exception as exc:
+            print(f"  ! could not read {p.name} for structure calibration: {exc}")
+    return [t for t in out if t.strip()]
+
+
+def _composite_structure_corpus(prof: config.Profile) -> tuple[list[str], str]:
+    """Units for a composite voice, drawn from its sources' own documents.
+
+    A composite has no `source_documents/` of its own, so without this it falls
+    back to the blended store and the paragraph line calibrates on the chunker.
+    Reading the sources' documents fixes that but loses the declared weighting,
+    and unweighted the biggest corpus wins: `research-blend` declares research
+    60% / personal 30% / creative 10% while creative supplies four times the
+    units of the other two together. So each source contributes units in
+    proportion to its declared share, with the whole scaled to whichever source
+    is the binding constraint.
+    """
+    per_source: list[tuple[str, float, list[str]]] = []
+    for src in composite_mod.load_sources(prof, min_words=120):
+        if src.profile is None:
+            continue
+        units = structure_mod.segment(_structure_corpus(src.profile))
+        if units:
+            per_source.append((src.slug, src.weight, units))
+    if not per_source:
+        return [], "no source documents in any component"
+    total_w = sum(w for _, w, _ in per_source)
+    scale = min(len(u) / (w / total_w) for _, w, u in per_source)
+    out: list[str] = []
+    detail = []
+    for slug, w, units in per_source:
+        take = max(1, min(len(units), round(scale * w / total_w)))
+        # Evenly spaced rather than the first `take`, so one long document at the
+        # front of a corpus cannot stand in for the whole of it.
+        step = len(units) / take
+        out.extend(units[int(i * step)] for i in range(take))
+        detail.append(f"{slug} {take}")
+    return out, f"component documents ({', '.join(detail)})"
+
+
+def _calibrate_structure(prof: config.Profile, texts: list[str]) -> None:
+    """Build the structural calibration from the author's source documents.
+
+    `texts` is the fingerprint's already-segmented corpus and is used only when
+    no source documents are present, which is a store-only install. Failures
+    print and do not abort: the structure block is reporting, and a voice
+    without it keeps every gate it had before.
+    """
+    docs = _structure_corpus(prof)
+    if docs:
+        units, source = structure_mod.segment(docs), f"{len(docs)} source documents"
+    elif composite_mod.is_composite(prof):
+        # Already segmented per component, so the shares survive.
+        units, source = _composite_structure_corpus(prof)
+    else:
+        units, source = texts, "the store (no source documents)"
+    if not units:
+        print(f"Structure calibration skipped: no usable corpus for '{prof.slug}'.")
+        return
+    try:
+        cal = structure_mod.calibrate(units)
+    except Exception as exc:
+        print(f"Structure calibration skipped: {exc}")
+        return
+    cal.save(Path(prof.scrub_path).parent / structure_mod.FILENAME)
+    fp = ", ".join(f"{k} {v:.0%}" for k, v in sorted(cal.self_flag.items()))
+    note = "" if cal.otd_available else " (no spaCy, opener line unavailable)"
+    thin = "  THIN: bands from this few pieces are noise." if cal.thin else ""
+    print(f"Structure bands over {cal.n_units} units from {source}{note}; "
+          f"flags on the author's own pieces: {fp or 'not measurable'}.{thin}")
+
+
+def _calibrate_composite(prof: config.Profile, structure_only: bool = False) -> int:
     """Calibrate a voice blended from several corpora.
 
     The fingerprint uses weighted means and stds, so the dominant source sets the
@@ -377,6 +502,9 @@ def _calibrate_composite(prof: config.Profile) -> int:
     print(composite_mod.describe(prof))
 
     texts, weights = composite_mod.weighted_corpus(srcs)
+    if structure_only:
+        _calibrate_structure(prof, texts)
+        return 0
     try:
         fp = calibrate_weighted(texts, weights, feature_set=prof.feature_set)
     except ValueError as e:
@@ -392,6 +520,7 @@ def _calibrate_composite(prof: config.Profile) -> int:
     cal.save(prof.scrub_path)
     pres = presence_mod.calibrate(texts)
     pres.save(prof.presence_path)
+    _calibrate_structure(prof, texts)
     print(
         f"Calibrated composite '{prof.slug}': fingerprint over {fp.n_pieces} weighted "
         f"units (self-baseline RMS-z {fp.self_baseline:.3f}, p95 {fp.fit_threshold:.3f}); "
@@ -401,7 +530,38 @@ def _calibrate_composite(prof: config.Profile) -> int:
     return 0
 
 
-def cmd_calibrate(name: str | None) -> int:
+def _calibrate_rhetoric_ext(prof: config.Profile, texts: list[str]) -> None:
+    """Refresh the second detector family's corpus rates.
+
+    Rates are re-measured; policy is carried over. dash_zero, disabled, the
+    advisory list and whether demotion was asked for are statements by or about
+    the person (set with `python -m mimesis_voice.rhetoric_ext calibrate`), and
+    a rebuild must not silently undo them.
+    """
+    path = prof.scrub_path.parent / rhetoric_ext_mod.FILENAME
+    try:
+        old = rhetoric_ext_mod.RhetoricExtCalibration.load(path) if path.exists() else None
+        cal = rhetoric_ext_mod.calibrate(
+            texts,
+            demote=bool(old and old.demote),
+            dash_zero=bool(old and old.dash_zero),
+            advisory=list(old.advisory) if old else None,
+        )
+        if old:
+            cal.disabled = list(old.disabled)
+        cal.save(path)
+    except Exception as e:  # a reporting family; never block a calibration on it
+        print(f"  (second detector family not recalibrated: {e})")
+
+
+def cmd_calibrate(name: str | None, structure_only: bool = False) -> int:
+    """Rebuild a voice's measured artifacts from its corpus.
+
+    ``structure_only`` rebuilds just the structural bands and leaves the
+    fingerprint, scrubber and presence floors untouched. It exists so an
+    existing voice can gain the structure block without its other thresholds
+    being recomputed under it, which would move a gate nobody asked to move.
+    """
     prof = _resolve(name)
 
     # A composite voice calibrates from its declared sources, with each source's
@@ -413,7 +573,7 @@ def cmd_calibrate(name: str | None) -> int:
             for x in problems:
                 print(f"  - {x}")
             return 1
-        return _calibrate_composite(prof)
+        return _calibrate_composite(prof, structure_only=structure_only)
 
     pieces = ingest.read_pieces(prof.db_path)
     if not pieces:
@@ -439,6 +599,9 @@ def cmd_calibrate(name: str | None) -> int:
             f"{len(candidate)} units of ~{target} words for calibration."
         )
         texts = candidate
+    if structure_only:
+        _calibrate_structure(prof, texts)
+        return 0
     try:
         fp = fp_calibrate(texts, feature_set=prof.feature_set)
     except ValueError as e:
@@ -453,6 +616,8 @@ def cmd_calibrate(name: str | None) -> int:
     # backstop rather than a starting point.
     pres = presence_mod.calibrate(texts)
     pres.save(prof.presence_path)
+    _calibrate_structure(prof, texts)
+    _calibrate_rhetoric_ext(prof, texts)
     print(
         f"Calibrated '{prof.slug}': fingerprint over {fp.n_pieces} pieces "
         f"(self-baseline RMS-z {fp.self_baseline:.3f}); "
@@ -485,6 +650,84 @@ def cmd_accept(args) -> int:
         print(f"Accepted draft for '{prof.slug}' as {rec['id']} "
               f"({len(after.split())} words). Total accepted: {len(accepted_mod.load_accepted(prof))}.")
     print(f"Next: mimesis recalibrate {prof.slug}   # fold the accepted set into the fingerprint")
+    return 0
+
+
+def cmd_harvest(args) -> int:
+    """Recover graded drafts from Claude Code transcripts into the profile.
+
+    The MCP path sends every draft through scrub/gate as a tool argument, so the
+    text lives in the session transcript while the profile kept only a SHA. This
+    reads it back. See harvest.py for what each record kind is worth.
+    """
+    from . import harvest as harvest_mod
+
+    only = None if args.all_voices else _resolve(args.name).slug
+    assume = args.assume_voice
+    print(f"Reading transcripts from {harvest_mod.transcript_root()} ...")
+    h = harvest_mod.mine_all(only_voice=only, assume_voice=assume, since=args.since,
+                             project=args.project)
+    print(
+        f"{h.transcripts_read} transcript(s) with mimesis activity, "
+        f"{h.drafts_seen} draft(s) seen, {h.unattributed} call(s) with no voice argument."
+    )
+    c = h.counts()
+    print(
+        f"  author-edit pairs : {c['author_pairs']:5d}   (author wrote the after side)\n"
+        f"  repair pairs      : {c['repair_pairs']:5d}   (model fixed its own draft)\n"
+        f"  slate preferences : {c['slate_prefs']:5d}   (gate picked a winner)\n"
+        f"  accept candidates : {c['accept_candidates']:5d}   (staged, need review)"
+    )
+    if h.unattributed and not assume:
+        print(
+            f"\n{h.unattributed} call(s) passed no voice= argument, so they cannot be "
+            "attributed to a profile. They came from:"
+        )
+        for proj, n in sorted(h.unattributed_by_project.items(), key=lambda kv: -kv[1])[:12]:
+            print(f"    {n:5d}  {proj}")
+        print(
+            "  Route one directory at a time, once you are satisfied which voice was\n"
+            "  active there:\n"
+            "    mimesis harvest research --project my-research-project --assume-voice research"
+        )
+    if args.dry_run:
+        print("\nDry run; nothing written.")
+        return 0
+
+    slugs = config.list_profiles() if args.all_voices else [_resolve(args.name).slug]
+    total = {}
+    for slug in slugs:
+        prof = config.resolve_named(slug)
+        if prof is None:
+            continue
+        wrote = harvest_mod.apply_harvest(prof, h)
+        if any(wrote.values()):
+            print(f"\n{slug}: " + ", ".join(f"{k}+{v}" for k, v in wrote.items() if v))
+            total[slug] = wrote
+    if not total:
+        print("\nNothing new to write; every record was already on disk.")
+        return 0
+    print(
+        "\nNegative and preference signal is live. Accept candidates are staged in "
+        "profiles/<voice>/harvest/accept_pending.jsonl and change the fingerprint, so "
+        "review them and then run: mimesis harvest <voice> --accept"
+    )
+    return 0
+
+
+def cmd_harvest_accept(args) -> int:
+    from . import harvest as harvest_mod
+
+    prof = _resolve(args.name)
+    n = harvest_mod.promote_accepts(prof)
+    if not n:
+        print(
+            f"No candidate in profiles/{prof.slug}/harvest/accept_pending.jsonl carries "
+            "label 'accept'. Edit the label field on the ones you want, then re-run."
+        )
+        return 0
+    print(f"Promoted {n} harvested draft(s) into the accepted set for '{prof.slug}'.")
+    print(f"Next: mimesis recalibrate {prof.slug}   # fold them into the fingerprint")
     return 0
 
 
@@ -599,8 +842,13 @@ def cmd_scrub(args) -> int:
         if prof.presence_path.exists()
         else presence_mod.PresenceCalibration.default()
     )
-    rep = scrub_mod.analyze(text, cal, source=source, detect=args.detect, fp=fp, pres=pres)
+    rep = scrub_mod.analyze(text, cal, source=source, detect=args.detect, fp=fp, pres=pres,
+                            ext=rhetoric_ext_mod.load_for(prof))
     print(scrub_mod.render(rep, prof.name))
+    # The structural block is reporting, not a flag, and it is printed here as
+    # well as in the MCP tool so the two surfaces say the same thing about the
+    # same draft.
+    print(structure_report.render(text, structure_mod.load_for(prof), prof.name))
     return 0
 
 
@@ -790,9 +1038,20 @@ def build_parser() -> argparse.ArgumentParser:
     p_new2.add_argument("name")
     p_new2.add_argument("--from", dest="sources", nargs="+", default=None, metavar="PATH",
                         help="files or folders to import (folders are walked recursively)")
+    p_new2.add_argument("--author", default=None, metavar="NAME",
+                        help="the writer's name as it should appear in prompts (default: from NAME)")
     p_new2.add_argument("--backend", choices=["fast", "style"], default="fast")
     p_new2.add_argument("--no-build", action="store_true",
                         help="import only; skip ingest + calibrate")
+    p_new2.add_argument("--force", action="store_true",
+                        help="build even when inspection says the corpus is too small")
+
+    p_insp = sub.add_parser("inspect", help="report on a folder of writing before building a voice")
+    p_insp.add_argument("sources", nargs="+", metavar="PATH")
+
+    p_pur = sub.add_parser("purity", help="rank a voice's corpus pieces by how machine-written they read")
+    p_pur.add_argument("name")
+    p_pur.add_argument("--top", type=int, default=40)
 
     p_add = sub.add_parser("add", help="add documents to a voice and rebuild it")
     p_add.add_argument("name")
@@ -815,6 +1074,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_cal = sub.add_parser("calibrate")
     p_cal.add_argument("name", nargs="?", default=None)
+    p_cal.add_argument("--structure-only", action="store_true",
+                       help="rebuild only the structural bands, leaving the "
+                            "fingerprint, scrubber and presence floors alone")
 
     p_acc = sub.add_parser("accept", help="record an accepted draft (optionally an edit)")
     p_acc.add_argument("name")
@@ -822,6 +1084,23 @@ def build_parser() -> argparse.ArgumentParser:
     p_acc.add_argument("--from", dest="from_file", default=None,
                        help="the pre-edit file; mines contrastive pairs from the diff")
     p_acc.add_argument("--task", default=None, help="the brief this draft answered")
+
+    p_harv = sub.add_parser(
+        "harvest",
+        help="recover graded drafts from Claude Code transcripts into the profile")
+    p_harv.add_argument("name", nargs="?", default=None)
+    p_harv.add_argument("--all-voices", action="store_true",
+                        help="harvest every profile in one pass")
+    p_harv.add_argument("--assume-voice", default=None, metavar="NAME",
+                        help="attribute calls that passed no voice= argument to NAME")
+    p_harv.add_argument("--project", default=None, metavar="SUBSTR",
+                        help="only read transcripts whose project directory matches")
+    p_harv.add_argument("--since", default=None, metavar="YYYY-MM-DD",
+                        help="only read transcripts modified on or after this date")
+    p_harv.add_argument("--dry-run", action="store_true",
+                        help="report what would be recovered; write nothing")
+    p_harv.add_argument("--accept", action="store_true",
+                        help="promote reviewed accept candidates into the accepted set")
 
     p_recal = sub.add_parser("recalibrate", help="fold the accepted set into the fingerprint")
     p_recal.add_argument("name", nargs="?", default=None)
@@ -859,6 +1138,10 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.cmd == "new":
         return cmd_new(args)
+    if args.cmd == "inspect":
+        return cmd_inspect(args)
+    if args.cmd == "purity":
+        return cmd_purity(args)
     if args.cmd == "add":
         return cmd_add(args)
     if args.cmd == "profile":
@@ -870,9 +1153,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "ingest":
         return cmd_ingest(args.name, args.force)
     if args.cmd == "calibrate":
-        return cmd_calibrate(args.name)
+        return cmd_calibrate(args.name, structure_only=args.structure_only)
     if args.cmd == "accept":
         return cmd_accept(args)
+    if args.cmd == "harvest":
+        return cmd_harvest_accept(args) if args.accept else cmd_harvest(args)
     if args.cmd == "recalibrate":
         return cmd_recalibrate(args)
     if args.cmd == "compose":
