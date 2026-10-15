@@ -294,6 +294,12 @@ def blend_scrub(sources: list[Source], base_whitelist: list[str]):
         antithesis_p95=rhet.antithesis_p95,
         cleft_p25=rhet.cleft_p25,
         antithesis_p25=rhet.antithesis_p25,
+        # Measured on the pooled sources for the same reason as the two above: a
+        # composite that inherits neither source's chain calibration would fall
+        # back to the module floor and hold a blended voice to a threshold nobody
+        # measured.
+        chain_len=rhet.chain_len,
+        chain_p95=rhet.chain_p95,
         density_p25=qual.density_p25,
         specificity_p25=qual.specificity_p25,
     )

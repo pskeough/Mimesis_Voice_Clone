@@ -100,8 +100,22 @@ def _extract_pdf(path: Path) -> list[str]:
     return _finalize_paragraphs(re.split(r"\n+", raw))
 
 
+# A YAML front-matter block at the top of a .md export (date, url, likes,
+# comments, type). Left in, it becomes the first "paragraph" of every piece:
+# a social-media export corpus was calibrated with a URL and four metadata
+# colons in each post, and every post then counted as containing a dash because the
+# closing "---" sat inline in the chunk text.
+_FRONT_MATTER_RE = re.compile(r"\A\s*---[ \t]*\n.*?\n---[ \t]*(?:\n|\Z)", re.DOTALL)
+
+
+def strip_front_matter(raw: str) -> str:
+    return _FRONT_MATTER_RE.sub("", raw, count=1)
+
+
 def _extract_text(path: Path) -> list[str]:
     raw = clean_text(path.read_text(encoding="utf-8", errors="replace"))
+    if path.suffix.lower() == ".md":
+        raw = strip_front_matter(raw)
     blocks = re.split(r"\n\s*\n", raw)
     return _finalize_paragraphs(blocks)
 
@@ -164,8 +178,18 @@ def chunk_paragraphs(paragraphs: list[str]) -> list[str]:
         if split_oversized:
             continue  # that paragraph became chunks on its own; keep going
         if cur_wc < MIN_WORDS and chunks:
+            # Fold a small tail into the previous chunk. This used to BREAK
+            # unconditionally, which is right at the end of a document and wrong
+            # everywhere else: when a paragraph over HARD_CAP_WORDS follows a
+            # short overlap paragraph, the inner loop stops with only that short
+            # paragraph in `cur`, the fold ran, and the break discarded the rest
+            # of the document. Measured 2026-09-02 on a 124,123-word book with a
+            # 397-word paragraph at position 35: 5 chunks, 897 words out.
             chunks[-1] = chunks[-1] + "\n\n" + "\n\n".join(cur)
-            break
+            if j >= len(paragraphs):
+                break
+            i = j  # no overlap here: the next paragraph is the oversized one and splits itself
+            continue
         if cur:
             chunks.append("\n\n".join(cur))
         if j >= len(paragraphs):

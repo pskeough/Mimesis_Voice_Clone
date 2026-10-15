@@ -33,6 +33,9 @@ from . import accepted as accepted_mod
 from . import cadence as cadence_mod
 from . import composite as composite_mod
 from . import config, fidelity, ingest, retrieve, textnorm
+from . import rhetoric_ext as rhetoric_ext_mod
+from .measures import calibration as structure_mod
+from .measures import report as structure_report
 from .fingerprint import Fingerprint
 from .scrub import ScrubCalibration, ScrubReport, analyze, author_uses_dashes, render, scalpel
 
@@ -65,12 +68,18 @@ def _claude_bin() -> str:
     return shutil.which("claude") or "claude"
 
 
-def claude_generate(prompt: str, model: str = "sonnet", timeout: int = 900) -> str:
+def claude_generate(prompt: str, model: str = "sonnet", timeout: int = 900,
+                    effort: str | None = None) -> str:
     """Run one headless ``claude -p`` generation and return its text.
 
     Raises ``RuntimeError`` on a non-zero exit; callers decide whether to fall
     back (compose surfaces this so ``--dry-run`` stays useful when the CLI is
     unavailable).
+
+    ``effort`` maps to the CLI's ``--effort``. Left None the CLI's own default
+    applies, so nothing changes for existing callers. It exists for batch work:
+    a hundred rewrites for an experiment do not need the reasoning budget one
+    draft for the author does.
     """
     exe = _claude_bin()
     cmd = [
@@ -81,6 +90,8 @@ def claude_generate(prompt: str, model: str = "sonnet", timeout: int = 900) -> s
         "--output-format", "text",
         "--system-prompt", _STATIC_SYSTEM,
     ]
+    if effort:
+        cmd += ["--effort", effort]
     env = {k: v for k, v in os.environ.items() if k not in _STRIP_ENV}
     is_win = os.name == "nt"
     try:
@@ -256,12 +267,13 @@ def _anchor_block(
     profile: config.Profile,
     n_examples: int,
     exclude_files: set[str] | None = None,
+    move: str | None = None,
 ) -> str:
     parts: list[str] = []
     # Contrastive transform demos: the profile's own pairs plus any mined from the
     # author's edits (Upgrade 3). Edits are the same anchor type, so they render
     # identically and stack with the shipped pairs.
-    demos = retrieve.transform_demos(task, 4, profile) if profile.pairs_path else []
+    demos = retrieve.transform_demos(task, 4, profile, move=move) if profile.pairs_path else []
     if accepted_mod.has_accepted(profile):
         demos = demos + accepted_mod.demo_pairs(profile, task, 3)
     if demos:
@@ -317,8 +329,13 @@ def build_kit(
     exclude_files: set[str] | None = None,
     markup: str = "plain",
     source: str | None = None,
+    fmt: str | None = None,
 ) -> str:
-    """Assemble the full composition kit (rules + anchors + task).
+    """Assemble the full composition kit (rules + guidance + anchors + task).
+
+    ``fmt`` is the caller's named format. When it names a rhetorical move
+    ("discussion", "related_work") it selects the guidance card and re-ranks the
+    transform demos; otherwise the move is inferred from the task text.
 
     ``source`` is the document being rewritten, when there is one. Its rhythm is
     stated as a constraint rather than left implicit: a model asked only to
@@ -345,11 +362,21 @@ def build_kit(
                 f"improvement, because uniform sentence length is the single "
                 f"strongest signal that prose was machine-written."
             )
+    # Structure block sits between the voice rules and the anchors: after the
+    # rules so the voice block keeps first position, before the anchors so the
+    # model reads what the passage must do before it reads how the author sounds
+    # doing it. Empty string for profiles with no guidance pack.
+    from . import guidance as guidance_mod
+    structure = guidance_mod.block(task, profile, fmt)
+    structure = f"{structure}\n\n" if structure else ""
+    move = guidance_mod.resolve_move(task, fmt, guidance_mod.genre_for(profile) or "") \
+        if guidance_mod.genre_for(profile) else None
     return (
         f"# VOICE COMPOSITION KIT — write in {profile.name}'s voice\n\n"
         f"TASK: {task}\n\n"
         f"{_rules_block(profile, cal, markup=markup)}{extra}\n\n"
-        f"{_anchor_block(task, profile, n_examples, exclude_files=exclude_files)}"
+        f"{structure}"
+        f"{_anchor_block(task, profile, n_examples, exclude_files=exclude_files, move=move)}"
     )
 
 
@@ -385,7 +412,28 @@ def _quality_prompt(task: str, candidates: list[str]) -> str:
     )
 
 
-def _rewrite_prompt(kit: str, draft: str, worst: list[tuple[str, float]]) -> str:
+def _structure_section(structure: list[str] | None) -> str:
+    """The structural findings as repair instructions, or nothing.
+
+    Only the machine-direction failures reach here. `measures.report.repair_notes`
+    drops the other side deliberately: the study's reader preferred the candidate
+    that over-varied its paragraphs (CV 0.79 against the source's 0.34), so
+    telling a model to even them out would optimise toward the failure the
+    measure exists to catch.
+    """
+    if not structure:
+        return ""
+    return (
+        "\n\nThe draft also has structural problems the fingerprint cannot see. Each "
+        "names the evidence; fix what it points at and change nothing else:\n\n"
+        + "\n\n".join(f"  {n}" for n in structure)
+        + "\n\nDo not fix these by adding sentences. Fix them by rebuilding the ones "
+          "that are already there."
+    )
+
+
+def _rewrite_prompt(kit: str, draft: str, worst: list[tuple[str, float]],
+                    structure: list[str] | None = None) -> str:
     # Cadence features get plain-language instructions; a model cannot act on
     # "sl_autocorr1 z=+2.3", but it can act on "long sentences bunch together".
     parts = []
@@ -393,12 +441,28 @@ def _rewrite_prompt(kit: str, draft: str, worst: list[tuple[str, float]]) -> str
         h = cadence_mod.hint(name, z)
         parts.append(h if h else f"{name} is {'too high' if z > 0 else 'too low'} (z={z:+.2f})")
     feats = "; ".join(parts)
+    # The structural findings ride in this pass rather than a later one. They
+    # describe the same object the fingerprint features describe -- where
+    # sentences start and end -- and splitting them across two rewrites hands the
+    # second pass a draft the first has already restructured underneath it.
     return (
         f"{kit}\n\n## REWRITE\n"
         f"This draft is close but its rhythm and stylometric fingerprint deviate from the "
         f"author: {feats}.\nRewrite it to correct those specific problems while preserving "
         f"meaning and every fact. Changing the pacing means changing where sentences start "
-        f"and end, not swapping words. Output only the rewritten text.\n\nDRAFT:\n{draft}"
+        f"and end, not swapping words. Output only the rewritten text."
+        f"{_structure_section(structure)}\n\nDRAFT:\n{draft}"
+    )
+
+
+def _structure_rewrite_prompt(kit: str, draft: str, structure: list[str]) -> str:
+    return (
+        f"{kit}\n\n## STRUCTURAL REPAIR\n"
+        f"This draft is in the author's voice on every surface measure and still does not "
+        f"read like them, because of how it is built rather than which words it uses."
+        f"{_structure_section(structure)}\n\n"
+        f"Preserve meaning, every fact and number, and the voice. Never add em-dashes. "
+        f"Output only the repaired text.\n\nDRAFT:\n{draft}"
     )
 
 
@@ -605,7 +669,7 @@ def compose(
     slate_size = int(gate_cfg.get("slate_size", 4))
     max_rewrites = int(gate_cfg.get("max_rewrites", 2))
 
-    kit = build_kit(task, profile, cal, n_examples=n_examples,
+    kit = build_kit(task, profile, cal, n_examples=n_examples, fmt=fmt,
                     exclude_files=exclude_files, markup=markup, source=source)
 
     if dry_run:
@@ -621,7 +685,7 @@ def compose(
         if pieces:
             sample = max(pieces, key=len)
             rmsz, _ = _score(sample, fp)
-            rep = analyze(sample, cal, fp=fp)
+            rep = analyze(sample, cal, fp=fp, ext=rhetoric_ext_mod.load_for(profile))
             notes.append(
                 f"dry-run self-test on a real corpus piece ({len(sample.split())} words): "
                 f"RMS-z={rmsz:.3f} (threshold {rmsz_max:.3f}, corpus self-baseline "
@@ -660,7 +724,7 @@ def compose(
         # count is the second Pareto axis, so a constant flag across the slate
         # flattens that axis and collapses the front to pure RMS-z ranking, which
         # is the centroid-seeking behaviour the front exists to prevent.
-        c.scrub = analyze(fixed, cal, source=source, fp=fp)
+        c.scrub = analyze(fixed, cal, source=source, fp=fp, ext=rhetoric_ext_mod.load_for(profile))
         if source:
             c.fid = fidelity.verify(source, fixed, fmt=markup)
         return c
@@ -684,6 +748,13 @@ def compose(
         )
 
     # 2. Fingerprint gate + targeted rewrites on failure.
+    #
+    # The structural bands ride along in every rewrite prompt from here on. They
+    # never gate: a candidate is not rejected for them and the winner is not
+    # chosen on them, because voice and construction move in opposite directions
+    # under optimisation and a gate on both optimises against one. What they do
+    # is tell a rewrite that was already happening what is actually wrong.
+    struct_cal = structure_mod.load_for(profile)
     iterations = 0
 
     def _passes(c: Candidate) -> bool:
@@ -707,7 +778,8 @@ def compose(
         # 30-60s when the gate passed on the first pass and no rewrite ran.
         def _rewrite_one(c: Candidate) -> Candidate:
             worst = fp.worst_features(c.text, k=3)
-            prompt = _rewrite_prompt(kit, c.text, worst)
+            prompt = _rewrite_prompt(kit, c.text, worst,
+                                     structure_report.repair_notes(c.text, struct_cal))
             # Naming the actual fidelity breakages is what the earlier retry loop
             # failed to do: it resampled with an identical prompt and got the same
             # class of output back. A rewrite told "you flattened the cadence and
@@ -778,7 +850,7 @@ def compose(
                 model=model,
             )
             r_fixed, r_em = scalpel(repaired, fmt=markup, allow_dashes=_allow_dashes(cal))
-            r_rep = analyze(r_fixed, cal, source=source, fp=fp)
+            r_rep = analyze(r_fixed, cal, source=source, fp=fp, ext=rhetoric_ext_mod.load_for(profile))
             r_fid = fidelity.verify(source, r_fixed, fmt=markup) if source else None
             r_rmsz = _score(textnorm.to_prose(r_fixed, markup), fp)[0]
             # Accept the repair only if it reduced hard flags AND either cleared them
@@ -804,6 +876,61 @@ def compose(
                 )
         except RuntimeError:
             notes.append("scrub gate: repair call failed; surfacing flagged draft")
+
+    # 4b. Structural repair, one bounded pass, on the machine-direction failures
+    # the fingerprint and the scrubber both pass: restatement, opener monotony,
+    # one-size paragraphs, metronomic sentences, over-used constructions.
+    #
+    # This runs only when nothing earlier rewrote the draft. A draft that already
+    # went through the fingerprint or scrub rewrite has had its structure changed
+    # underneath these findings, and repairing against stale evidence is how a
+    # loop starts chasing itself.
+    #
+    # The accept-guard is the same shape as the scrub repair's and is what keeps
+    # this honest: the repair is kept only if it removed structural findings AND
+    # did not push the fingerprint out of the gate AND did not add a hard flag AND
+    # did not break source fidelity. Structure is the least authoritative of the
+    # four -- the author's rulings outrank it -- so it loses every tie.
+    struct_notes = structure_report.repair_notes(chosen.text, struct_cal)
+    if struct_notes and iterations == 0 and not chosen.scrub.hard_flags:
+        notes.append(f"structure: {len(struct_notes)} finding(s); one repair pass")
+        try:
+            fixed = claude_generate(
+                _structure_rewrite_prompt(kit, chosen.text, struct_notes), model=model
+            )
+            s_fixed, s_em = scalpel(fixed, fmt=markup, allow_dashes=_allow_dashes(cal))
+            s_rep = analyze(s_fixed, cal, source=source, fp=fp,
+                            ext=rhetoric_ext_mod.load_for(profile))
+            s_fid = fidelity.verify(source, s_fixed, fmt=markup) if source else None
+            s_rmsz = _score(textnorm.to_prose(s_fixed, markup), fp)[0]
+            s_notes = structure_report.repair_notes(s_fixed, struct_cal)
+            fewer = len(s_notes) < len(struct_notes)
+            fp_ok = s_rmsz <= rmsz_max or s_rmsz <= chosen.rmsz + 1e-6
+            flags_ok = len(s_rep.hard_flags) <= len(chosen.scrub.hard_flags)
+            fid_ok = s_fid is None or len(s_fid.hard) <= len(chosen.fid.hard if chosen.fid else [])
+            if fewer and fp_ok and flags_ok and fid_ok:
+                chosen.text = s_fixed
+                chosen.emdash_fixed += s_em
+                chosen.rmsz, chosen.zs = _score(textnorm.to_prose(s_fixed, markup), fp)
+                chosen.scrub = s_rep
+                chosen.fid = s_fid
+                notes.append(
+                    f"structure: repaired, {len(struct_notes)} -> {len(s_notes)} finding(s), "
+                    f"fingerprint {s_rmsz:.3f}"
+                )
+            else:
+                why = ("no structural improvement" if not fewer
+                       else "broke source fidelity" if not fid_ok
+                       else "added a hard flag" if not flags_ok
+                       else "fingerprint regressed")
+                notes.append(f"structure: repair rejected ({why}); surfacing the draft as scored")
+        except RuntimeError:
+            notes.append("structure: repair call failed; surfacing the draft as scored")
+    elif struct_notes:
+        notes.append(
+            f"structure: {len(struct_notes)} finding(s), reported not repaired "
+            f"(an earlier rewrite already changed this draft)"
+        )
 
     # 5. Detector gate (Upgrade 2), last. Report the Binoculars signal always; if
     # it reads clearly machine-generated (score below the calibrated threshold),
@@ -851,7 +978,7 @@ def compose(
                     # fp= so the final rendered report still carries the two-sided
                     # fit check; without it the detector-rewrite path silently
                     # returned a report that could only see AI tells.
-                    chosen.scrub = analyze(d_fixed, cal, source=source, fp=fp)
+                    chosen.scrub = analyze(d_fixed, cal, source=source, fp=fp, ext=rhetoric_ext_mod.load_for(profile))
                     chosen.fid = d_fid
                     chosen.detector = d_det
                     notes.append(

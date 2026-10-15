@@ -1,16 +1,20 @@
 # One-command install for Windows.
 #
-#   powershell -ExecutionPolicy Bypass -File install.ps1
+#   powershell -ExecutionPolicy Bypass -File install.ps1               # everything
+#   powershell -ExecutionPolicy Bypass -File install.ps1 -SkipMcp      # leave Claude Code's MCP config alone
+#   powershell -ExecutionPolicy Bypass -File install.ps1 -NoStructure  # skip the optional spaCy tagger (~50 MB)
 #
 # Same five steps as install.sh: venv, package, build and calibrate every
 # profile that ships with a corpus but no store, register the MCP server with
-# Claude Code, run the doctor on each voice.
+# Claude Code as 'mimesis', run the doctor on each voice.
 #
 # Safe to re-run. Ingest hash-skips an unchanged corpus, calibration is
 # deterministic, and MCP registration is remove-then-add so it never duplicates.
 
+param([switch]$SkipMcp, [switch]$NoStructure)
 $ErrorActionPreference = 'Continue'
 Set-Location -LiteralPath $PSScriptRoot
+if ($env:MIMESIS_SKIP_MCP -eq '1') { $SkipMcp = $true }
 
 function Write-Bold($m) { Write-Host $m -ForegroundColor White }
 function Fail($what, $fix) {
@@ -52,6 +56,23 @@ Write-Bold "== 3/5  Package =="
 & $vpy -m pip install --quiet -e .
 if ($LASTEXITCODE -ne 0) { Fail "pip install failed" "re-run and read the error above" }
 Write-Host "   mimesis-voice installed (fast backend; no torch)"
+# Optional: the spaCy tagger behind the opener-class line of the structure
+# report. Everything else works without it, so a failure here is a note.
+if (-not $NoStructure) {
+    & $vpy -c "import spacy; spacy.load('en_core_web_sm')" *> $null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "   spaCy tagger already present"
+    } else {
+        & $vpy -m pip install --quiet -e ".[structure]"
+        $ok = ($LASTEXITCODE -eq 0)
+        if ($ok) { & $vpy -m spacy download en_core_web_sm *> $null; $ok = ($LASTEXITCODE -eq 0) }
+        if ($ok) { Write-Host "   spaCy tagger installed (opener check on)" }
+        else {
+            Write-Host "   ! spaCy tagger not installed; the opener line will report unavailable."
+            Write-Host "     Retry later: .venv\Scripts\python.exe -m pip install -e .[structure]; .venv\Scripts\python.exe -m spacy download en_core_web_sm"
+        }
+    }
+}
 
 Write-Bold "== 4/5  Voices =="
 $built = 0
@@ -87,17 +108,11 @@ foreach ($dir in (Get-ChildItem -Path profiles -Directory -ErrorAction SilentlyC
 if ($built -eq 0) { Write-Host "   (nothing new to build)" }
 
 Write-Bold "== 5/5  Claude Code =="
-if (Get-Command claude -ErrorAction SilentlyContinue) {
+if ($SkipMcp) {
+    Write-Host "   skipped (-SkipMcp). Register later with: powershell -File scripts\register-mcp.ps1"
+} elseif (Get-Command claude -ErrorAction SilentlyContinue) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'scripts\register-mcp.ps1')
-    if ($LASTEXITCODE -ne 0) { Write-Host "   ! MCP registration failed; run scripts\register-mcp.ps1 by hand" }
-    # An older voice server left registered will keep answering voice requests,
-    # and nothing about that failure looks like a failure.
-    $listed = (& claude mcp list 2>$null) -join "`n"
-    if ($listed -match '(?m)^\s*mimesis\s') {
-        Write-Host "`n   NOTE: an older MCP server named 'mimesis' is still registered."
-        Write-Host "   If that is a previous voice install, remove it so it cannot answer:"
-        Write-Host "       claude mcp remove mimesis --scope user"
-    }
+    if ($LASTEXITCODE -ne 0) { Write-Host "   ! MCP registration did not complete; read the lines above, then run scripts\register-mcp.ps1" }
 } else {
     Write-Host "   claude CLI not on PATH; skipped MCP registration."
     Write-Host "   Install Claude Code, then run: powershell -File scripts\register-mcp.ps1"
@@ -118,16 +133,15 @@ foreach ($dir in (Get-ChildItem -Path profiles -Directory -ErrorAction SilentlyC
 Write-Host @'
 
 ===========================================================
- Done. Try a voice:
+ Done. Next, build a voice from your own writing.
 
-   .venv\Scripts\python.exe -m mimesis_voice.cli profile list
-   .venv\Scripts\python.exe -m mimesis_voice.cli compose <voice> "a short note about your week"
+ Easiest: open Claude Code in this folder and say "set up my voice".
+ It will ask what you write, where the files are, and walk you through it.
 
- Or build a voice from a folder of your own writing:
+ By hand:
+   .venv\Scripts\python.exe -m mimesis_voice.cli inspect "C:\path\to\my\writing"
+   .venv\Scripts\python.exe -m mimesis_voice.cli new myvoice --from "C:\path\to\my\writing" --author "Your Name"
 
-   .venv\Scripts\python.exe -m mimesis_voice.cli new myvoice --from "C:\path\to\my\writing"
-
- Or just ask Claude Code, in this folder, to write something in your voice.
  Re-run install.ps1 any time; it is safe and skips finished work.
 ===========================================================
 '@

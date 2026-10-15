@@ -13,10 +13,11 @@ n is small. One judgment, 10 pairs. Read this as "which hypotheses survive a fir
 contact with real data", not as a ranking with confidence behind it.
 """
 import re
+import os
 import sys
 from collections import Counter
 
-sys.path.insert(0, r"C:\AI Coding Projects\Online_AI\Mimesis\src")
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 from mimesis_voice import cli as up_cli, preference as pref  # noqa: E402
 from mimesis_voice.fingerprint import Fingerprint  # noqa: E402

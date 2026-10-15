@@ -131,6 +131,117 @@ in another.
 
 Stored as `it_is_p95` on the scrub calibration and populated by `calibrate()`.
 
+### `comma-chain` — advisory, per-author calibrated
+
+Comma-spliced clause chains. Named by the reference author in every voice profile
+— *"the over use of commas, that I could, and I preferred, and I am"*, *"run on
+commas and flowery vocab"*, *"really long overwrought commas"* — and undetectable
+until 2026-09-03, because the fingerprint's `commas_per_sent` is a **mean**: six
+clauses chained in one sentence and six clean sentences give the same number.
+
+Distributional, not central-tendency. A sentence is split on `,`, `;` and
+clause-level coordinators, each fragment is asked whether it is a finite clause
+(explicit subject plus finite verb), and the measure is the longest run of
+**consecutive** finite clauses, plus the rate of over-length sentences per 100.
+
+Counting clauses rather than commas is the whole detector. The reference author's
+longest comma sentence runs 18 comma-delimited fragments and scores a chain of
+**1**, because those fragments are appositives and participials. His long
+sentences accumulate phrases; the generated ones accumulate predications.
+
+Per-author calibrated, and unlike the four hard flags it has to be: this is a
+device he uses on purpose (a short list of first-person clauses, for
+emphasis) at 0.09–0.18% of his sentences. Two numbers are stored, `chain_len` (his
+p95 longest chain, floored at 4 and capped at 6) and `chain_p95` (his rate at that
+length, floored at 4 per 100 sentences). A single number cannot do both jobs: a
+length alone flags his own accumulations, and a rate alone has no length to count.
+
+Ground truth. Two drafts in the judgment stores carry a blind rationale naming
+comma overuse in his own words, and the detector fires on both — including the
+sentence his complaint is a verbatim quotation of. Across all 40 generated arms it
+fires on 5, all of them drafts he ranked at or near the bottom; the one human arm
+in the same comparison has a longest chain of 2 and does not fire.
+
+False positives against his own corpora, each voice on its own calibration:
+creative **2.0%** of pieces, research **0.0%**, personal **2.6%**, against
+**6.3%** of the generated text in `evals/` that has already passed the whole gate
+pipeline.
+
+`find_comma_chains()`, `comma_chain_rate()`, `longest_comma_chain()`
+
+### The four rate constructions — reporting only, per-author calibrated
+
+Added 2026-09-09 from the decompose-regenerate study, which measured all
+twenty-nine detectors above as rates per 1,000 words against nine authors and
+added these four of its own. They live in `measures/construction.py`, not in
+`rhetoric.py`, because none of them is a span you can quote and delete: each is
+a property of a sequence of sentences, so the report gives a signed z against
+the author's own corpus and the sentences that produced it.
+
+| construction | unit | what it is | the study's finding |
+|---|---|---|---|
+| `anaphora2` | per 100 sentence pairs | consecutive sentences opening on the same two words | the dominant machine tell at every model size, z +5 to +7 in the 4B bases. *"I remember the way she had..."* fifteen times in one cell |
+| `copula_density` | per 100 words | is / was / are / were / be / been / being / am | above the author in every adapter at every size: the passage describes states where the author moves |
+| `rhetorical_question` | per 100 sentences | sentences ending in a question mark | **under**-produced by every base and restored by the adapters. The only one of the four whose machine direction is down |
+| `long_short` | per 100 sentence pairs | a sentence over 25 words followed by one of six or fewer | clears the replicate floor at ratio 2.0; **and see below** |
+
+All four clear the study's replicate floor individually (ratio 2.0-4.8). The
+aggregates over all thirty-three constructions do not once winsorised (1.3-1.4)
+and are deliberately not implemented.
+
+#### `long_short` is the mechanical form of a rule the author had already stated
+
+Measured 2026-09-09 on ten fresh Sonnet drafts written in the reference author's
+creative voice through the real kit. Every draft passed the fingerprint gate
+(0 of 10 above threshold, RMS-z 0.73-1.34 against 1.57), and `long_short` fired
+on **8 of 10**, at z +2.2 to +31.9 against an author mean of 0.93 per 100 pairs.
+The same line touches **1%** of that author's own corpus.
+
+What it is catching, from the worst draft — eleven beats in twenty-nine
+sentences:
+
+> ...and he knew her before he had finished admitting he was looking.
+> **"Ten years, maybe more."**
+>
+> ...some year that had run into the ones beside it without leaving a mark.
+> **"She had cut her hair."**
+>
+> ...the direction the bus would come from if it was coming.
+> **"None of it was for him."**
+
+That draft carried one scrub flag (`pointer-verdict`) and sat at RMS-z 1.27.
+Neither the thirteen surface features nor any of the twenty-nine lexical
+detectors could see the pattern, because there is no word to point at.
+
+The author's own recorded rule, from 2026-08-11, months before this measure
+existed: *"Say the thing once. No antithesis, no comma-spliced clause chains,
+no punchy declarative then reversal, no aphorism closers."* `long_short` is that
+rule with a number on it. `find_closing_flourish` catches one lexical shape of
+it; this catches the rhythm regardless of wording.
+
+**None of them gates.** The cut is a signed z of 3 in the machine direction,
+which was chosen against this document's own rule rather than assumed. Four
+candidate rules were scored on five of the study's authors, counting the share of
+each author's **own held-out passages** the rule flags against the share of that
+author's base-model cells it catches:
+
+| rule | flags of the authors' own prose | catches of base-model cells |
+|---|---|---|
+| z ≥ 2 | 6-28% | 17-83% |
+| **z ≥ 3** | **0-8%** | **13-73%** |
+| above the author's corpus maximum | 0-4% | 6-56% |
+
+z ≥ 2 breaks the 15% rule on three of the five authors. z ≥ 3 clears it on all
+five. The full table, per author, is in `docs/STRUCTURE_GATES.md`.
+
+A feature is skipped rather than scored when the draft is too short for it to
+resolve — when one instance would by itself exceed the cut (a single
+long-then-short beat in a five-sentence draft computes to 25 per 100 pairs), or,
+for rhetorical questions, when the author's own rate would not predict even one.
+Both floors come from the author's numbers, not from a constant.
+
+`measures/construction.rates()`, `measures/report._constructions()`
+
 ### Earlier detectors
 
 `find_triads`, `find_meta_asides`, `find_self_ratings`, `find_absence_punches`,
@@ -184,7 +295,23 @@ were measured, and both turned out to be deliberate devices of the reference
 author. The triad detector was narrowed twice as a result.
 
 `it_is_p95` needs no manual work — run `mimesis calibrate <voice>` and it is
-populated from your corpus.
+populated from your corpus. So do `chain_len` and `chain_p95`; until you run it,
+the comma-chain check falls back to module floors rather than to zero, and
+`scripts/portability_audit.py` warns that it is standing on a constant instead of
+on your voice. Check that one the same way as the rest, on pieces rather than
+words:
+
+```python
+cal = rhetoric.calibrate(pieces)
+flagged = sum(1 for t in pieces if rhetoric.analyze(t, cal).chain_over)
+print(f"comma-chain  len={cal.chain_len} p95={cal.chain_p95:.1f}  "
+      f"{100 * flagged / len(pieces):.1f}% of pieces")
+```
+
+Under about **5% of pieces** is the working ceiling; the reference author sits at
+0.0–2.6%. Above it, either the clause test is wrong for your author's syntax or
+the corpus needs the length raising, and `chain_len` is the knob — it is capped at
+6 so the check cannot calibrate itself into silence.
 
 ---
 

@@ -1,0 +1,3 @@
+The steps in the order they ran. Each step names its input, the operation, and its output. Parameters carry their values. Where a step involves randomness, the seed or the sampling rule is stated. Where items are excluded, the rule and the count excluded are both given. Where a human made a judgement, who, how many, and with what agreement.
+
+Fails when steps are described by purpose rather than by action, when the order in the text differs from the order in the pipeline, when a parameter is called standard or default without its value, or when the procedure cannot be followed without reading the code.

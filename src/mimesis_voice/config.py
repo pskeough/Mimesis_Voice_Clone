@@ -137,6 +137,9 @@ class Profile:
     # declared shares of influence. See composite.py. Empty = ordinary voice.
     compose_from: list = field(default_factory=list)
     allow_mixed_authors: bool = False
+    # Genre guidance pack under src/mimesis_voice/guidance/<name>/. None = the
+    # kit carries no structure block, exactly as before guidance existed.
+    guidance: str | None = None
 
     def format_config(self, fmt: str | None) -> dict:
         """Merge a named format's overrides over the profile defaults."""
@@ -203,6 +206,7 @@ def _build_profile(slug: str) -> Profile:
         feature_set=cfg.get("feature_set", "v1"),
         compose_from=list(cfg.get("compose_from") or []),
         allow_mixed_authors=bool(cfg.get("allow_mixed_authors", False)),
+        guidance=(str(cfg["guidance"]).strip() or None) if cfg.get("guidance") else None,
     )
 
 
@@ -318,6 +322,30 @@ def ensure_profiles() -> None:
     active = "example" if "example" in profs else (profs[0] if profs else None)
     if active and (not st or st.get("active") != active):
         write_state(active=active)
+
+
+EXAMPLE_SLUG = "example"
+
+
+def is_built(slug: str) -> bool:
+    """A voice is usable once calibrate has written its fingerprint and scrubber."""
+    data = profile_dir(slug) / "data"
+    return (data / "fingerprint.json").exists() and (data / "scrub_calibration.json").exists()
+
+
+def user_voices() -> list[str]:
+    """Every profile except the synthetic example that ships with the repo."""
+    return [s for s in list_profiles() if s != EXAMPLE_SLUG]
+
+
+def needs_setup() -> bool:
+    """True until the person has at least one built voice of their own.
+
+    The example profile is a demo. A fresh clone that answers "write this in my
+    voice" from it produces confident prose in a voice that belongs to nobody,
+    so the server treats this state as "ask for their writing first".
+    """
+    return not any(is_built(s) for s in user_voices())
 
 
 def resolve(slug: str | None = None) -> Profile:

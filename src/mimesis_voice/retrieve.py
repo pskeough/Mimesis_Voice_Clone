@@ -272,6 +272,7 @@ def _load_pairs(path: Path) -> list[dict]:
 # has never been published. This is that experiment.
 _MOVE_KEYWORDS = {
     "abstract": ("abstract",),
+    "introduction": ("introduction",),
     "gap_statement": ("gap", "understudied", "unexplored"),
     "motivation": ("motivat", "why this matters"),
     "related_work": ("related work", "prior work", "literature review"),

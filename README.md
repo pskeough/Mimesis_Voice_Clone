@@ -173,18 +173,29 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 
 That creates the venv, installs the package, builds and calibrates every voice
-that ships with a corpus, registers the MCP server with Claude Code, and runs a
-health check on each profile. Both installers are safe to re-run and skip
-finished work.
+that ships with a corpus, registers the MCP server with Claude Code as
+`mimesis`, and runs a health check on each profile. Both installers are safe to
+re-run and skip finished work. `--skip-mcp` (`-SkipMcp` on Windows) leaves
+Claude Code's configuration alone.
 
-Then point it at your writing:
+Then build a voice from your writing. The simplest route is to open Claude Code
+in this folder and say "set up my voice". `CLAUDE.md` gives it an intake script:
+it asks what forms you write in, where the files are, and whether any of them
+were co-written or AI-assisted, inspects the folder, builds the voice, and
+writes a test piece for you to judge. The shipped `example` voice is synthetic,
+and until you have a voice of your own every writing tool returns that intake
+instead of a draft.
+
+By hand:
 
 ```bash
-mimesis new myvoice --from ~/Documents/my-writing
+mimesis inspect ~/Documents/my-writing          # counts, length bands, problems; writes nothing
+mimesis new myvoice --from ~/Documents/my-writing --author "Your Name"
+mimesis purity myvoice                          # pieces that read machine-written
 ```
 
-That is the whole setup. `new` walks the folder recursively, copies every
-supported document into the profile, ingests, and calibrates. Nested paths are
+`new` walks the folder recursively, copies every supported document into the
+profile, ingests, calibrates, and makes the voice active. Nested paths are
 folded into filenames rather than collapsed, so `essays/2024/rain.txt` and
 `notes/rain.txt` both survive, and re-running it is idempotent by content hash.
 Add more writing later with `mimesis add myvoice --from ~/more`, or drop files
@@ -233,12 +244,27 @@ fingerprint, it becomes the fingerprint.
 
 ### As an MCP server
 
-`scripts/register-mcp.ps1` and `scripts/register-mcp.sh` register a stdio server
-named `mimesis-v2` with Claude Code at user scope. They are write-only helpers,
-run them yourself when ready, and they never touch an existing `mimesis`
-registration. Tools: `get_voice_guide`, `retrieve_style_examples`,
-`retrieve_transform_demos`, `compose_in_voice`, `scrub_ai_footprint`,
-`eval_voice`.
+The installer registers a stdio server named `mimesis` with Claude Code at
+user scope through `scripts/register-mcp.sh` / `scripts/register-mcp.ps1`. The
+script replaces a registration that points at this folder, removes the old
+`mimesis-v2` name, and refuses to overwrite a `mimesis` that points somewhere
+else (`MIMESIS_MCP_NAME` picks another name).
+
+Tools:
+
+| Tool | Does |
+|---|---|
+| `list_voices` | voices, which is active, whether setup is needed |
+| `inspect_corpus`, `create_voice` | build a voice from a folder of writing |
+| `compose_slate`, `gate_candidates` | gated composition: the host model writes candidates, the gate scores and picks |
+| `compose_in_voice` | a kit and a fixed-slot observe-then-write protocol, no discriminator |
+| `get_voice_guide`, `retrieve_style_examples`, `retrieve_transform_demos` | anchors |
+| `scrub_ai_footprint` | scrub, fingerprint fit, rhetorical detectors, structure report |
+| `eval_voice` | fingerprint distribution against the corpus self-baseline |
+| `record_preference` | log an accept, reject or style correction |
+
+`docs/GLOBAL_CLAUDE.md` is an optional block for `~/.claude/CLAUDE.md` that
+routes "write this in my voice" to these tools from any folder.
 
 `CLAUDE.md` in this folder is the operating guide for Claude Code itself,
 covering setup, verification, and the rules that must not be worked around.
@@ -252,8 +278,9 @@ covering setup, verification, and the rules that must not be worked around.
 | _(base)_ | fastmcp, fastembed, numpy, python-docx, pypdf | full engine, `fast` embeddings, PDF ingest |
 | `[style]` | sentence-transformers, torch | StyleDistance `style` backend |
 | `[detect]` | transformers, torch | Binoculars-style perplexity-ratio detector signal (reporting only, never a gate) |
+| `[structure]` | spacy (+ `en_core_web_sm`) | the opener line of the structure report; installed by default, ~50 MB |
 
-Both extras pull torch, which is a multi-GB download. Stay on the default `fast`
+`[style]` and `[detect]` pull torch, which is a multi-GB download. Stay on the default `fast`
 backend unless you have a measured reason not to.
 
 ---

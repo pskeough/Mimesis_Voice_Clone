@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mimesis-voice"
-version = "2.0.0"
+version = "2.1.0"
 description = "One voice engine, N voices, discriminator in the loop: stylometric voice cloning with a fingerprint gate, MMR-diverse retrieval, and an AI-footprint scrubber."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -32,6 +32,10 @@ style = ["sentence-transformers>=3.0", "torch>=2.2"]
 # gate: detector scores are noisy per-document and gating on them optimises for
 # evading a detector rather than for sounding like the author.
 detect = ["transformers>=4.40", "torch>=2.2"]
+# The opener-class line of the structure report. Needs the tagger and the model:
+#   pip install "mimesis-voice[structure]" && python -m spacy download en_core_web_sm
+# Without it that one line reports unavailable and every other measure works.
+structure = ["spacy>=3.7"]
 
 [project.scripts]
 mimesis = "mimesis_voice.cli:main"
@@ -48,4 +52,4 @@ package-dir = { "" = "src" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-mimesis_voice = ["py.typed"]
+mimesis_voice = ["py.typed", "guidance/*/*.md"]

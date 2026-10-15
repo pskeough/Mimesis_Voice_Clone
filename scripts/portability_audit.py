@@ -117,6 +117,13 @@ def audit_profile(slug: str) -> dict:
         empty.append("antithesis band")
     if empty:
         out["warnings"].append("checks disabled by empty calibration: " + ", ".join(empty))
+    # Not "disabled": the comma-chain check falls back to a module floor rather
+    # than to zero, so it still runs. But it is running on a constant instead of
+    # on this voice, which is the exact distinction this audit exists to report.
+    if cal.chain_len <= 0:
+        out["warnings"].append(
+            "comma-chain length is the module floor, not this voice's p95; "
+            "re-run: mimesis calibrate")
     return out
 
 
