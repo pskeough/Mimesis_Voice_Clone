@@ -27,6 +27,13 @@ profiles/*
 !profiles/example/**
 profiles/example/data/*.sqlite
 profiles/example/data/*.sqlite-*
+# Runtime records written by every scrub/gate/compose call and by harvest. The
+# example folder is un-ignored above, so these need their own rule or a demo
+# run would leave drafts and transcript metadata trackable.
+profiles/*/harvest/
+profiles/*/preferences.jsonl
+profiles/*/judgments.jsonl
+profiles/example/data/rhetoric_ext_calibration.json
 
 # Eval artifacts: harness code, the frozen brief set, and REPORT.md are safe to
 # commit (no corpus content). Generated voiced text under evals/<config>/ is

@@ -1,17 +1,29 @@
 #!/usr/bin/env bash
 # One-command install for macOS and Linux.
 #
-#   bash install.sh
+#   bash install.sh                 # everything
+#   bash install.sh --skip-mcp      # do not touch Claude Code's MCP config
+#   bash install.sh --no-structure  # skip the optional spaCy tagger (~50 MB)
 #
 # Creates the venv, installs the package, builds and calibrates every profile
 # that ships with a corpus but no store, registers the MCP server with Claude
-# Code, and finishes by running the doctor on each voice.
+# Code as 'mimesis', and finishes by running the doctor on each voice.
 #
 # Safe to re-run. Ingest hash-skips an unchanged corpus, calibration is
 # deterministic, and MCP registration is remove-then-add so it never duplicates.
 set -uo pipefail
 
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+SKIP_MCP="${MIMESIS_SKIP_MCP:-0}"
+STRUCTURE=1
+for arg in "$@"; do
+  case "$arg" in
+    --skip-mcp) SKIP_MCP=1 ;;
+    --no-structure) STRUCTURE=0 ;;
+    *) echo "unknown option: $arg"; exit 2 ;;
+  esac
+done
 
 bold() { printf "\033[1m%s\033[0m\n" "$1"; }
 fail() { printf "\n! %s\n  FIX: %s\n" "$1" "$2"; exit 1; }
@@ -48,6 +60,18 @@ bold "== 3/5  Package =="
 # to be used from here rather than copied into site-packages.
 "$VPY" -m pip install --quiet -e . || fail "pip install failed" "re-run and read the error above"
 echo "   mimesis-voice installed (fast backend; no torch)"
+# Optional: the spaCy tagger behind the opener-class line of the structure
+# report. Everything else works without it, so a failure here is a note.
+if [ "$STRUCTURE" = 1 ]; then
+  if "$VPY" -c "import spacy; spacy.load('en_core_web_sm')" >/dev/null 2>&1; then
+    echo "   spaCy tagger already present"
+  elif "$VPY" -m pip install --quiet -e ".[structure]" && "$VPY" -m spacy download en_core_web_sm >/dev/null 2>&1; then
+    echo "   spaCy tagger installed (opener check on)"
+  else
+    echo "   ! spaCy tagger not installed; the opener line will report unavailable."
+    echo "     Retry later: $VPY -m pip install -e '.[structure]' && $VPY -m spacy download en_core_web_sm"
+  fi
+fi
 
 bold "== 4/5  Voices =="
 built=0
@@ -72,15 +96,10 @@ done
 [ "$built" -gt 0 ] || echo "   (nothing new to build)"
 
 bold "== 5/5  Claude Code =="
-if command -v claude >/dev/null 2>&1; then
-  bash scripts/register-mcp.sh || echo "   ! MCP registration failed; run scripts/register-mcp.sh by hand"
-  # An older voice server left registered will keep answering voice requests,
-  # and nothing about that failure looks like a failure.
-  if claude mcp list 2>/dev/null | grep -qE '^\s*mimesis\s'; then
-    printf "\n   NOTE: an older MCP server named 'mimesis' is still registered.\n"
-    printf "   If that is a previous voice install, remove it so it cannot answer:\n"
-    printf "       claude mcp remove mimesis --scope user\n"
-  fi
+if [ "$SKIP_MCP" = 1 ]; then
+  echo "   skipped (--skip-mcp). Register later with: bash scripts/register-mcp.sh"
+elif command -v claude >/dev/null 2>&1; then
+  bash scripts/register-mcp.sh | sed 's/^/   /' || echo "   ! MCP registration did not complete; read the lines above, then run scripts/register-mcp.sh"
 else
   echo "   claude CLI not on PATH; skipped MCP registration."
   echo "   Install Claude Code, then run: bash scripts/register-mcp.sh"
@@ -99,13 +118,16 @@ done
 cat <<'EOF'
 
 ===========================================================
- Done. Try a voice:
+ Done. Next, build a voice from your own writing.
 
-   .venv/bin/python -m mimesis_voice.cli profile list
-   .venv/bin/python -m mimesis_voice.cli compose <voice> "a short note about your week"
+ Easiest: open Claude Code in this folder and say "set up my voice".
+ It will ask what you write, where the files are, and walk you through it.
+
+ By hand:
+   .venv/bin/python -m mimesis_voice.cli inspect ~/path/to/your/writing
+   .venv/bin/python -m mimesis_voice.cli new myvoice --from ~/path/to/your/writing --author "Your Name"
    (Windows: use .venv\Scripts\python.exe)
 
- Or just ask Claude Code, in this folder, to write something in your voice.
  Re-run `bash install.sh` any time; it is safe and skips finished work.
 ===========================================================
 EOF
