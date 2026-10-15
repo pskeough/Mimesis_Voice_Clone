@@ -1,0 +1,3 @@
+Order: one or two sentences of context a scientist outside the field can follow; the specific problem in one sentence; one sentence stating what this paper did and on what; the main result with its number; what that result changes against what was believed or known before; one sentence of consequence. The abstract stands alone: a reader who reads nothing else must leave able to state the contribution.
+
+Fails when a result arrives before the reader knows the gap it answers, when method detail displaces the finding, when any claim exceeds what the body carries, or when the final sentence rates the work instead of stating what follows from it. Every number in the abstract must appear identically in the body.

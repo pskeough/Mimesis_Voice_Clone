@@ -1,0 +1,3 @@
+Ordered by the argument, not by the sequence the analyses were run. Each paragraph opens by naming what was tested, gives the number with its uncertainty and N, and closes on the answer that number supports. Figures and tables are referenced by what they show. Null results appear with the same weight and precision as positive ones.
+
+The number comes first and the sentence is built around it. Fails when magnitudes are replaced by adjectives, when interpretation of what a result means leaks in ahead of the Discussion, when a paragraph reports several unrelated analyses, or when a result mentioned here has no table, figure, or appendix entry to check it against.

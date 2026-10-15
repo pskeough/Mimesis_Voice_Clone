@@ -1,0 +1,3 @@
+Order: the principal finding in one sentence; the study's strengths and weaknesses with equal weight, the weaknesses a reviewer would raise first coming first; how the finding sits against prior studies, including where results differ and why, without assuming this study is the one that is right; what the finding means, with the mechanism marked as candidate and the implication bounded by the design; what remains unanswered.
+
+Fails when it re-sells the results, repeats numbers already reported, dresses speculation as explanation, becomes a literature inventory, or extrapolates past the sample and design. Each paragraph names one weakness, strength, or comparison and evaluates it; the reader is left to judge meaning.

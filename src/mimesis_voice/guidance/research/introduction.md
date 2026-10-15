@@ -1,0 +1,3 @@
+Three moves in order. Establish the territory: what the field studies and why it matters, with prior work cited for what it found. Establish the niche: the specific thing prior work did not do, could not see, or got wrong, and what not knowing it costs. Occupy the niche: what this paper does, on what, and its principal finding. The final paragraph states the study and finding without restating context.
+
+Every paragraph before the last runs context, content, conclusion. Prior work here is selective and cited for what it leaves undone, not inventoried. Fails when the gap is asserted without evidence that it is a gap, when significance is missing, when the introduction pre-empts the Discussion, or when the last paragraph is a table of contents.

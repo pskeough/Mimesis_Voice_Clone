@@ -1,0 +1,3 @@
+Organised by question or approach, never by paper or by date. Each cited work is a grammatical subject doing something: what it built, tested, or found, stated with its result. Placement of each work relative to this paper is given as a reason: what it established and what its design could not see. The section ends by locating this paper against that map.
+
+Fails as a catalogue of one sentence per paper, as a chronological list, as praise or dismissal of the cited authors, or as an inventory that never states what the field has left undone. Length is set by the number of distinct positions in the field, not by the number of papers read.

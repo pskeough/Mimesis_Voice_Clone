@@ -1,0 +1,3 @@
+Enough that an expert can reproduce the study and a reviewer can check each choice against the results. Order: what was studied and the population or corpus, the materials and data with their provenance, the procedure as executed, the measures, the analysis. Every choice that could move a result is stated with its value: sample sizes, exclusions and their counts, thresholds, seeds, model versions, prompts, dates.
+
+The general design comes first, this study's specific instantiation second, and exhaustive detail goes to an appendix with a pointer. Fails when results or interpretation leak in, when a justification essay replaces a stated parameter, or when a step is described by its intent rather than by what was done.
