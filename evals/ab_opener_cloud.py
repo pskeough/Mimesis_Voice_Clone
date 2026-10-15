@@ -21,7 +21,7 @@ import sys
 import time
 from collections import Counter
 
-M = r"C:\AI Coding Projects\Online_AI\Mimesis"
+M = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(M, "src"))
 
 from mimesis_voice import cli as up_cli, gate, scrub as S  # noqa: E402
@@ -30,7 +30,7 @@ from mimesis_voice.scrub import ScrubCalibration  # noqa: E402
 
 N_SLATE = 4
 VOICE = sys.argv[1] if len(sys.argv) > 1 else "creative"
-OUT = os.path.join(r"C:\LocalAI\LLM\eval\basilisk\ab_cloud", VOICE)
+OUT = os.path.join(os.path.join(os.environ.get("MIMESIS_EVAL_OUT", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "evals", "out")), "ab_cloud"), VOICE)
 
 TASKS = {
     "creative": (

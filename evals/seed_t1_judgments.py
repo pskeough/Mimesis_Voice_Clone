@@ -13,12 +13,12 @@ import json
 import os
 import sys
 
-sys.path.insert(0, r"C:\AI Coding Projects\Online_AI\Mimesis\src")
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 from mimesis_voice import cli as up_cli, preference as pref  # noqa: E402
 from mimesis_voice.fingerprint import Fingerprint  # noqa: E402
 
-ARMS = r"C:\LocalAI\LLM\eval\basilisk"
+ARMS = os.environ.get("MIMESIS_EVAL_OUT", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "evals", "out"))
 
 # rank, arm, grade, verbatim rationale
 RATINGS = [

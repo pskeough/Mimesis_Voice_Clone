@@ -14,12 +14,12 @@ import re
 import sys
 from collections import Counter
 
-M = r"C:\AI Coding Projects\Online_AI\Mimesis"
+M = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(M, "src"))
 from mimesis_voice import cli as up_cli, scrub as S  # noqa: E402
 from mimesis_voice.fingerprint import Fingerprint  # noqa: E402
 
-BAS = r"C:\LocalAI\LLM\eval\basilisk"
+BAS = os.environ.get("MIMESIS_EVAL_OUT", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "evals", "out"))
 AB = os.path.join(BAS, "ab_opener", "ab_results.json")
 
 _SENT = re.compile(r"[^.!?]+[.!?]+[\s\"']*", re.S)
