@@ -178,6 +178,12 @@ def build(scrub_report, quality_report=None, author: str = "the author") -> Verd
                 Tier.TICS, "rhetoric",
                 f"antithesis rate {rh.antithesis_rate:.1f}/1kw over {author}'s "
                 f"{rh.antithesis_p95:.1f}."))
+        if getattr(rh, "chain_over", False):
+            v.findings.append(Finding(
+                Tier.TICS, "rhetoric",
+                f"comma-spliced clause chains: {rh.chain_rate:.1f} sentences per 100 "
+                f"run {rh.chain_len}+ chained clauses (longest {rh.chain_max}), over "
+                f"the {rh.chain_p95:.1f} allowed for {author}."))
         for s in getattr(rh, "triads", [])[:2]:
             v.findings.append(Finding(
                 Tier.TICS, "rhetoric", f"parallel-triad escalation: \"{s[:70]}\"."))

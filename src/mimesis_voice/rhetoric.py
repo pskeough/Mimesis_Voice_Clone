@@ -73,6 +73,23 @@ _WORD_RE = re.compile(r"\b[\w']+\b")
 _SENT_RE = re.compile(r"(?<=[.!?])\s+(?=[\"'“‘(]?[A-Z0-9])")
 _CLAUSE_RE = re.compile(r"[,;]")
 
+# Floor for the calibrated clause-chain length (see section 14 at the foot of this
+# file). Declared here because RhetoricReport and RhetoricCalibration take it as a
+# dataclass default, which is evaluated at class-definition time.
+CHAIN_MIN_CLAUSES = 4
+# Ceiling on the same value. An author whose corpus pushes the calibrated length
+# past six has either a formatting problem or a sentence nobody can read; either
+# way the check should not be allowed to calibrate itself into silence.
+CHAIN_MAX_CLAUSES = 6
+# Floor under the calibrated chain RATE, in over-length sentences per 100
+# sentences, applied the way calibrate() already floors the cleft and antithesis
+# rates: an author whose corpus happens to contain almost none still tolerates one
+# incidental chain in a short passage. 4.0 is one chain per 25 sentences, which is
+# 20-40x this author's own sentence-level rate for a chain of that length (0.176%
+# creative, 0.118% research, 0.091% personal). Under it, a draft is doing what he
+# does; over it, the draft has a habit he does not have.
+CHAIN_RATE_FLOOR = 4.0
+
 
 def _split_sentences(text: str) -> list[str]:
     out: list[str] = []
@@ -292,6 +309,15 @@ class RhetoricReport:
     it_is_openers: list[str] = field(default_factory=list)
     it_is_rate: float = 0.0
     it_is_p95: float = 0.0
+    # Comma-spliced clause chains (section 14). chain_len is the calibrated
+    # length in force for this report, carried so render() can name it; chain_max
+    # is the longest chain the draft actually contains, which is the statistic
+    # commas_per_sent averages away.
+    comma_chains: list[str] = field(default_factory=list)
+    chain_rate: float = 0.0
+    chain_p95: float = 0.0
+    chain_len: int = CHAIN_MIN_CLAUSES
+    chain_max: int = 0
     cleft_rate: float = 0.0
     antithesis_rate: float = 0.0
     cleft_p95: float = 0.0
@@ -328,6 +354,22 @@ class RhetoricReport:
         return self.it_is_rate > self.it_is_p95
 
     @property
+    def chain_over(self) -> bool:
+        """Comma-spliced clause chains, over this author's own rate.
+
+        Two routes, because the complaint has two shapes. DENSITY is the main one
+        -- "the OVER USE of commas" -- and it is a rate against his floored 95th
+        percentile, so one chain inside a long piece is not overuse while one
+        chain inside a twelve-sentence draft is. LENGTH short-circuits it: a chain
+        two clauses past the calibrated length is the defect by itself, and making
+        it wait for a second instance would let the worst single sentence through.
+        Measured against his two blind drafts that name comma overuse in the
+        rationale, both routes are needed -- one draft trips each.
+        """
+        return (self.chain_max >= self.chain_len + 2
+                or self.chain_rate > self.chain_p95)
+
+    @property
     def hard_flags(self) -> list[str]:
         """Leakage is unambiguous (the model breaking character) and gates like an
         em-dash. The three tics are real but each has a nonzero measured false-positive
@@ -358,11 +400,16 @@ class RhetoricReport:
                     or self.self_ratings
                     or self.absence_punches or self.closing_flourish
                     or self.cleft_over or self.antithesis_over
-                    or self.cleft_under or self.antithesis_under)
+                    or self.cleft_under or self.antithesis_under
+                    or self.chain_over)
 
 
 def analyze(text: str, cal: "RhetoricCalibration | None" = None) -> RhetoricReport:
     cal = cal or RhetoricCalibration()
+    # A calibration written before section 14 existed carries chain_len 0. Fall
+    # back to the floor rather than to zero, which would make every sentence a
+    # chain; the same treatment the opener stats get in scrub.ScrubCalibration.
+    chain_len = min(max(int(cal.chain_len or 0), CHAIN_MIN_CLAUSES), CHAIN_MAX_CLAUSES)
     return RhetoricReport(
         cleft_rate=_rate(text, find_clefts),
         antithesis_rate=_rate(text, find_antithesis),
@@ -381,6 +428,15 @@ def analyze(text: str, cal: "RhetoricCalibration | None" = None) -> RhetoricRepo
         it_is_openers=find_it_is_openers(text),
         it_is_rate=it_is_opener_rate(text),
         it_is_p95=cal.it_is_p95,
+        comma_chains=find_comma_chains(text, chain_len),
+        chain_rate=comma_chain_rate(text, chain_len),
+        # calibrate() already applies this floor, so for a calibrated profile the
+        # max() is a no-op. It is here for the blank and pre-section-14
+        # calibrations, where a stored 0.0 would otherwise flag a single chain in
+        # any draft.
+        chain_p95=max(cal.chain_p95, CHAIN_RATE_FLOOR),
+        chain_len=chain_len,
+        chain_max=longest_comma_chain(text),
         leakage=find_leakage(text),
         triads=find_triads(text),
         meta_asides=find_meta_asides(text),
@@ -414,6 +470,25 @@ def _render_new(rep: "RhetoricReport") -> list[str]:
             f"vs this author's {rep.antithesis_p95:.1f} (95th pct). e.g. "
             f"\"{rep.antithesis[0][:60]}\". \"Not X but Y\" and \"rather than\" "
             f"manufacture precision from a contrast nobody raised. State the thing."
+        )
+    if rep.chain_over:
+        out.append(
+            f"- [MEDIUM] Comma-spliced clause chains: {rep.chain_rate:.1f} sentences "
+            f"per 100 run {rep.chain_len}+ chained clauses (longest {rep.chain_max}), "
+            f"against the {rep.chain_p95:.1f} allowed for this author. e.g. "
+            f"\"{rep.comma_chains[0][:80]}\". His long sentences accumulate phrases; "
+            f"this one accumulates predications. Break it, or cut the clauses that "
+            f"only restate the one before."
+        )
+    elif rep.comma_chains:
+        # Named under his rate rather than silently passed, on the same reasoning
+        # as the contrastive-connective line below: "run on commas" is a standing
+        # complaint, and an under-threshold instance was invisible until now. One
+        # line, and a cheap edit becomes available.
+        out.append(
+            f"- [LOW] Clause chains, under your rate so not gated: "
+            f"{'; '.join(repr(s[:70]) for s in rep.comma_chains[:2])}. Each is "
+            f"{rep.chain_len}+ finite clauses strung on commas inside one sentence."
         )
     return out
 
@@ -650,11 +725,20 @@ class RhetoricCalibration:
     # more average than the author it is imitating.
     cleft_p25: float = 0.0
     antithesis_p25: float = 0.0
+    # Comma-spliced clause chains, section 14. Two numbers because the check is
+    # two-stage: chain_len is HOW LONG a chain has to be before it counts for this
+    # author (his own 95th-percentile longest chain, floored at CHAIN_MIN_CLAUSES),
+    # and chain_p95 is HOW OFTEN he writes one at that length, per 100 sentences.
+    # A single number could not do both: a length alone flags his deliberate
+    # accumulations, and a rate alone has no length to count.
+    chain_len: int = 0
+    chain_p95: float = 0.0
     n_pieces: int = 0
 
     def to_dict(self) -> dict:
         return {"cleft_p95": self.cleft_p95, "antithesis_p95": self.antithesis_p95,
                 "cleft_p25": self.cleft_p25, "antithesis_p25": self.antithesis_p25,
+                "chain_len": self.chain_len, "chain_p95": self.chain_p95,
                 "n_pieces": self.n_pieces}
 
     @classmethod
@@ -663,6 +747,8 @@ class RhetoricCalibration:
                    antithesis_p95=d.get("antithesis_p95", 0.0),
                    cleft_p25=d.get("cleft_p25", 0.0),
                    antithesis_p25=d.get("antithesis_p25", 0.0),
+                   chain_len=d.get("chain_len", 0),
+                   chain_p95=d.get("chain_p95", 0.0),
                    n_pieces=d.get("n_pieces", 0))
 
 
@@ -692,12 +778,24 @@ def calibrate(texts: list[str], min_words: int = 200) -> RhetoricCalibration:
 
     cl = [_rate(t, find_clefts) for t in usable]
     an = [_rate(t, find_antithesis) for t in usable]
+    # Clause-chain length first, because the rate has to be counted at it. The
+    # p95 of the longest chain per unit lands at 2-3 on all three of this author's
+    # profiles, so the floor is what ships for him; the percentile is what would
+    # carry an author who chains on purpose. Ceiling stops a damaged corpus from
+    # calibrating the check into silence.
+    chain_len = min(
+        max(int(pct([longest_comma_chain(t) for t in usable], 0.95)), CHAIN_MIN_CLAUSES),
+        CHAIN_MAX_CLAUSES,
+    )
     return RhetoricCalibration(
         cleft_p95=p95(cl, 1.0),
         antithesis_p95=p95(an, 3.0),
         cleft_p25=pct(cl, 0.25),
         antithesis_p25=pct(an, 0.25),
         it_is_p95=p95([it_is_opener_rate(t) for t in usable], 0.0),
+        chain_len=chain_len,
+        chain_p95=p95([comma_chain_rate(t, chain_len) for t in usable],
+                      CHAIN_RATE_FLOOR),
         n_pieces=len(usable),
     )
 
@@ -983,3 +1081,242 @@ _DECLARATIVE_RATING_RE = re.compile(
 def find_declarative_ratings(text: str) -> list[str]:
     """A sentence that grades the previous one by pointing at it."""
     return [m.group(0).strip() for m in _DECLARATIVE_RATING_RE.finditer(text)]
+
+
+# --- 14. comma-spliced clause chains -------------------------------------------
+#
+# Named by the reference author in every voice profile and never previously
+# detectable: "the over use of commas, that I could, and I preferred, and I am";
+# "run on commas and flowery vocab"; "really long overwrought commas". The reason
+# no check existed is recorded in docs/AUTHOR_FEEDBACK.md section 7 -- the
+# fingerprint carries `commas_per_sent`, which is a MEAN, and a mean cannot see
+# accumulation. Six clauses chained inside one sentence and six clean sentences
+# produce the same number. Nothing else in this package looks at the shape of the
+# distribution, so the defect survived every gate.
+#
+# So this is measured as a MAXIMUM inside a sentence and a RATE across sentences,
+# not as a comma count. A sentence is split on `,`, `;` and clause-level
+# coordinators (and/but/or/nor/so/yet), and each fragment is asked whether it is a
+# finite clause -- an explicit subject followed by a finite verb. The run of
+# CONSECUTIVE finite clauses is the chain length. That distinction is the whole
+# detector: this author's long sentences accumulate PHRASES, and the generated
+# ones accumulate PREDICATIONS. His longest comma sentence in the creative corpus
+# runs 18 comma-delimited fragments and scores a chain length of 1, because those
+# fragments are appositives and participials rather than clauses. Counting commas
+# would have flagged it; counting clauses does not.
+#
+# WHY THIS ONE IS PER-AUTHOR CALIBRATED, unlike sections 1-4. The model-habit
+# detectors above are properties of the generating model and travel between
+# authors. This one is not: the construction is a device this author uses on
+# purpose, and some of his strongest lines are it: a four-clause first-person
+# list in one creative piece, a four-clause "they had ..." run in another, and a
+# second-person accumulation in a personal essay.
+#
+# A fixed presence threshold would gate those, which is the failure mode this file
+# has already been through twice on the triad rule (50.5% then 23.4% of his own
+# corpus). Measured over his three live corpora, share of sentences reaching each
+# chain length:
+#
+#            n_sents   >=3      >=4      >=5      >=6
+#   creative  18,709   1.155%   0.176%   0.027%   0.005%
+#   research     850   0.118%   0.118%   0.000%   0.000%
+#   personal   2,198   1.319%   0.091%   0.000%   0.000%
+#
+# Three chained clauses is ordinary English and 1.2% of his sentences, which is why
+# CHAIN_MIN_CLAUSES floors the calibrated length at four rather than three. The
+# calibrated length is the 95th percentile of the longest chain per calibration
+# unit; on all three of his profiles that percentile lands at 2-3 and the floor
+# carries it to 4, so the calibration is currently doing no visible work FOR HIM.
+# It is here for the case the floor was written against -- an author who chains
+# habitually, whose p95 lands at 5 or 6, and for whom a fixed 4 would repeat the
+# triad rule's mistake a third time.
+#
+# The gate is two-sided. Density is the complaint ("over USE"), so the main route
+# is a RATE against his own 95th percentile, floored at CHAIN_RATE_FLOOR; one
+# chain inside a long piece is not overuse, one chain inside a twelve-sentence
+# draft is. A chain two clauses past the calibrated length short-circuits the
+# rate, because at that length the sentence is the defect on its own.
+#
+# GROUND TRUTH. Two drafts in profiles/*/judgments.jsonl carry a blind rationale
+# that names comma overuse in his own words, and the rate route catches both:
+#
+#   ab2-2026-08-28-outoftouch-AvB / draftB-corpus-anchored, ranked 2 of 2:
+#     "then the overuse of commas: 'that I could', 'and I preferred', 'and I am'"
+#     -- the sentence he is quoting is "I found in it a version of our friendship
+#     that made no demands, that I could hold at whatever distance suited me, and
+#     I preferred it for a while, and I am ashamed of the preference." Chain 4,
+#     rate 8.3 per 100 sentences. His verbatim complaint in the ledger is a
+#     quotation of this line, which is why it is the calibration specimen.
+#
+#   arm4-2026-08-28-sibling / observe-wholepiece, ranked 4 of 4, "F minus tier":
+#     "'May I was angry, and the anger was...' comma comma." Two chains of 4 in
+#     fourteen sentences, rate 14.3.
+#
+# The length route is not idle either: it is what catches a single monster inside
+# an otherwise clean draft, where the rate stays low by dilution. In this author's
+# own corpus it is the only thing that reaches his longest chain, eight clauses.
+#
+# Swept over all 40 generated arms in the three judgment stores plus the one human
+# arm: 5 arms fire, and all five are drafts he ranked at or near the bottom or
+# whose rationale names an overexplaining tell. The human arm's longest chain is
+# 2; every model arm runs 3 or 4. Nothing he approved fires.
+#
+# ADVISORY, not hard, and this is a considered split from the four hard flags. The
+# hard flags are constructions he rejected by name under blind review AND that
+# measure at or near 0.000 in his corpora -- there is no rate of his to stay under,
+# so presence is the right gate. This one he has also named by name, repeatedly,
+# but it measures 0.09-0.18% of his sentences rather than zero, and the three lines
+# described above are his. The precedent for a named complaint that is nonetheless
+# rate-gated is it_is_opener_rate in section 11, advisory for exactly this reason:
+# the answer is profile-dependent, so a presence gate would be wrong somewhere.
+# Making this hard would reject his own prose on 4-5% of pieces, and a gate that
+# rejects the author is how a voice system produces prose more average than him.
+#
+# Measured false-positive rate, the share of his own pieces the gate flags with
+# that voice's own calibration: creative 2/98 = 2.0%, research 0/21 = 0.0%,
+# personal 1/38 = 2.6% over the raw source documents, and 1.5% / 0.0% / 2.7% over
+# the shorter units cmd_calibrate actually builds. Against 6.3% of the generated
+# text held in evals/, which has already passed the whole gate pipeline.
+#
+# The precedent this had to clear is in section 1: a triad rule that fired on 50.5%
+# then 23.4% of his real writing was rewritten both times. The three surviving
+# false positives are individually identifiable rather than a class of his prose
+# being misread -- one creative piece (a chain of 8, the longest he has written)
+# and one personal essay (a chain of 6) both come in on the length route, and a
+# third piece is a rate hit, one chain inside a 24-sentence piece.
+#
+# The sweep is in tests/test_rhetoric.py. Re-run it before pointing this at a
+# different author; a writer who chains habitually will calibrate to a longer
+# CHAIN length and a higher rate, and that is the mechanism working, not a bug.
+
+_CHAIN_COORD = r"(?:and|but|or|nor|so|yet)"
+# Subordinators and coordinators both appear at the head of a chained clause
+# ("..., THAT I could, AND I preferred"), so the clause test skips one of either
+# before looking for the subject.
+_CHAIN_SUBORD = (
+    r"(?:that|which|who|when|while|because|if|though|although|since|where|"
+    r"after|before|until|unless|whereas|as|and|but|or|nor|so|yet)"
+)
+_CHAIN_AUX = (
+    r"am|is|are|was|were|be|been|being|have|has|had|do|does|did|can|could|"
+    r"will|would|shall|should|may|might|must|ought|used"
+)
+# Irregular pasts carry no -ed to match on, and leaving them out cost real chains:
+# "I told myself the room was wrong" scored as a non-clause and broke one run of
+# four into two runs of two. This is the common irregular set, not a complete one;
+# a verb missing from it makes the detector miss a chain, never invent one.
+_CHAIN_IRREG = (
+    r"said|went|made|took|came|saw|knew|thought|got|gave|found|told|felt|left|kept|"
+    r"held|put|brought|began|sat|stood|lost|meant|met|ran|paid|heard|let|set|sent|"
+    r"spoke|spent|understood|wore|wrote|drove|fell|drew|grew|broke|chose|ate|drank|"
+    r"rose|threw|bought|caught|taught|fought|sold|built|slept|swept|read|led|fled|"
+    r"hid|rode|woke|stole|shook|forgot|became|blew|flew|swam|sang|rang|hung|dug|won|"
+    r"lay|laid|bore|tore|struck|stuck|shot|cut|hit|beat|bent|crept|dealt|knelt|lent|"
+    r"slid|spat|split|spread|sprang|sank|shone|shrank|swore|swung|wept|withdrew|"
+    r"arose|awoke|clung|strode"
+)
+_CHAIN_CONTR = r"(?:'s|'re|'ve|'ll|'d|'m)"
+_CHAIN_FINITE = (
+    rf"(?:(?:{_CHAIN_AUX})\b|(?:{_CHAIN_IRREG})\b|\w+(?:ed|es|s)\b|{_CHAIN_CONTR})"
+)
+# The -s/-es half of the heuristic above is a plural noun as often as it is a
+# third-person verb, and after a DEMONSTRATIVE that ambiguity is the whole
+# difference between a clause and a noun phrase. "He had kept them all, these
+# useless receipts, these letters, these tickets" scored as a four-clause chain,
+# because "useless", "letters" and "tickets" all end in -s. Demonstrative
+# subjects therefore need a verb that is unambiguously finite.
+_CHAIN_FINITE_STRICT = rf"(?:(?:{_CHAIN_AUX})\b|(?:{_CHAIN_IRREG})\b|\w+ed\b|{_CHAIN_CONTR})"
+_CHAIN_ADV = (
+    r"(?:not|never|still|also|already|just|only|then|now|again|once|always|often|\w+ly)"
+)
+# Personal pronouns are the one subject class that needs no verb list: at the head
+# of a comma-delimited fragment "I", "he", "they" are subjects essentially always,
+# and the next content word is the verb. Every other subject class has to show an
+# explicit finite verb, because "the way it looked" and "in the morning light" are
+# noun phrases rather than clauses, and matching those was the false-positive surface.
+_CHAIN_PPRON = r"(?:I|you|he|she|we|they|it)"
+_CHAIN_SUBJ = (
+    r"(?:there|nothing|everything|something|anything|"
+    r"nobody|everybody|everyone|someone|one|who)"
+)
+# Held apart from _CHAIN_SUBJ because a demonstrative is a determiner as often as
+# it is a pronoun, and only the verb after it says which. Kept as a subject class
+# rather than dropped, because a chain of relative clauses is the real thing:
+# "that opened the door, that let him in, that kept him there, that sent him
+# home" is four of them.
+_CHAIN_DEM = r"(?:this|that|these|those)"
+# One noun after the determiner, not two. With two, "the way it looked" matches
+# ("the way it" + "looked") and it is a noun phrase; "the cat had gone" needs only one.
+_CHAIN_DET = r"(?:the|a|an|his|her|its|their|my|our|your|this|that|these|those)"
+
+# Commas and semicolons always split. A bare coordinator splits only when a
+# SUBJECT follows it, and this lookahead is not decoration: splitting on every
+# "and/or/so/yet" cut "she had said SO once out loud" into "she had said" +
+# "once out loud" and turned a five-clause specimen into a three-clause one.
+# "black and white", "two or three", "said so", "not yet" all stay whole now,
+# while "I could and I preferred and I am" still splits. The {1,2} repetition is
+# for stacked coordinators ("..., and yet she still found ..."), which otherwise
+# leave a bare "and" fragment behind that breaks the run it belongs to.
+_CHAIN_SUBJ_HEAD = rf"(?:{_CHAIN_PPRON}|{_CHAIN_SUBJ}|{_CHAIN_DEM}|{_CHAIN_DET})\b"
+_CHAIN_SPLIT_RE = re.compile(
+    rf"[,;]|\s+(?:{_CHAIN_COORD}\s+){{1,2}}(?={_CHAIN_SUBJ_HEAD})", re.IGNORECASE
+)
+_CHAIN_CLAUSE_RE = re.compile(
+    rf"^\s*(?:{_CHAIN_SUBORD}\s+)?(?:"
+    rf"{_CHAIN_PPRON}\b\s+(?:{_CHAIN_ADV}\s+){{0,2}}[a-z']+\b"
+    rf"|{_CHAIN_SUBJ}\b\s+(?:{_CHAIN_ADV}\s+){{0,2}}{_CHAIN_FINITE}"
+    rf"|{_CHAIN_DEM}\b\s+(?:{_CHAIN_ADV}\s+){{0,2}}{_CHAIN_FINITE_STRICT}"
+    rf"|{_CHAIN_DET}\s+\w+\s+(?:{_CHAIN_ADV}\s+){{0,2}}{_CHAIN_FINITE}"
+    rf")",
+    re.IGNORECASE,
+)
+
+
+def _chain_length(sent: str) -> int:
+    """Longest run of CONSECUTIVE finite clauses joined by commas, semicolons or
+    coordinators inside one sentence.
+
+    A fragment that is not a finite clause -- an appositive, a list item, a
+    participial -- breaks the run rather than extending it. That is what keeps
+    this author's phrase-accumulating long sentences out of the count.
+    """
+    run = best = 0
+    for seg in _CHAIN_SPLIT_RE.split(sent):
+        seg = seg.strip()
+        if not seg:
+            continue
+        if _CHAIN_CLAUSE_RE.search(seg):
+            run += 1
+            best = max(best, run)
+        else:
+            run = 0
+    return best
+
+
+def find_comma_chains(text: str, min_clauses: int = CHAIN_MIN_CLAUSES) -> list[str]:
+    """Sentences carrying ``min_clauses`` or more chained finite clauses.
+
+    Returns whole sentences rather than spans: the construction IS the
+    accumulation, and half of it is not recognisable to a reader as the thing
+    being flagged.
+    """
+    return [s for s in _split_sentences(text) if _chain_length(s) >= min_clauses]
+
+
+def longest_comma_chain(text: str) -> int:
+    """The single longest clause chain anywhere in the text. This is the statistic
+    the fingerprint's mean ``commas_per_sent`` cannot see."""
+    return max((_chain_length(s) for s in _split_sentences(text)), default=0)
+
+
+def comma_chain_rate(text: str, min_clauses: int = CHAIN_MIN_CLAUSES) -> float:
+    """Over-length sentences per 100 sentences.
+
+    Normalised by sentence count rather than word count, matching
+    ``it_is_opener_rate``: this is a property of how sentences are built, and a
+    per-1000-words rate would move with sentence length instead of with the habit.
+    """
+    sents = _split_sentences(text)
+    if not sents:
+        return 0.0
+    return 100.0 * len(find_comma_chains(text, min_clauses)) / len(sents)

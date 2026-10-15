@@ -33,6 +33,7 @@ from .fingerprint import Fingerprint
 from . import presence as presence_mod
 from . import quality as quality_mod
 from . import rhetoric as rhetoric_mod
+from . import rhetoric_ext as rhetoric_ext_mod
 from . import textnorm
 
 # A draft is called off-voice when its fingerprint RMS-z exceeds the corpus
@@ -162,6 +163,12 @@ class ScrubCalibration:
     # pieces. Zero for an author who does not use them, which is the case a
     # blanket strip-to-zero rule silently assumed for everyone.
     dash_per1k_p95: float = 0.0
+    # Comma-spliced clause chains. chain_len is how many chained finite clauses a
+    # sentence needs before it counts for THIS author (his own p95, floored);
+    # chain_p95 is how often he writes one, per 100 sentences. The fingerprint's
+    # commas_per_sent is a mean and cannot see either -- see rhetoric.py section 14.
+    chain_len: int = 0
+    chain_p95: float = 0.0
     cleft_p25: float = 0.0
     antithesis_p25: float = 0.0
     density_p25: float = 0.0
@@ -197,6 +204,8 @@ class ScrubCalibration:
                     "cleft_p95": self.cleft_p95,
                     "antithesis_p95": self.antithesis_p95,
                     "it_is_p95": self.it_is_p95,
+                    "chain_len": self.chain_len,
+                    "chain_p95": self.chain_p95,
                     "cleft_p25": self.cleft_p25,
                     "antithesis_p25": self.antithesis_p25,
                     "density_p25": self.density_p25,
@@ -226,6 +235,12 @@ class ScrubCalibration:
             cleft_p95=d.get("cleft_p95", 0.0),
             antithesis_p95=d.get("antithesis_p95", 0.0),
             it_is_p95=d.get("it_is_p95", 0.0),
+            # Absent from calibrations written before section 14 existed. Zero
+            # means "not measured": rhetoric.analyze falls back to the module
+            # floor for the length, so an old profile gets the uncalibrated
+            # default rather than a threshold of zero that would flag everything.
+            chain_len=d.get("chain_len", 0),
+            chain_p95=d.get("chain_p95", 0.0),
             cleft_p25=d.get("cleft_p25", 0.0),
             antithesis_p25=d.get("antithesis_p25", 0.0),
             density_p25=d.get("density_p25", 0.0),
@@ -403,6 +418,8 @@ def calibrate(texts: list[str], whitelist: list[str] | None = None) -> ScrubCali
         cleft_p95=rhet.cleft_p95,
         antithesis_p95=rhet.antithesis_p95,
         it_is_p95=rhet.it_is_p95,
+        chain_len=rhet.chain_len,
+        chain_p95=rhet.chain_p95,
         cleft_p25=rhet.cleft_p25,
         antithesis_p25=rhet.antithesis_p25,
         density_p25=qual.density_p25,
@@ -463,6 +480,10 @@ class ScrubReport:
     fp_checked: bool = False
     presence: dict = field(default_factory=dict)
     rhetoric: "rhetoric_mod.RhetoricReport | None" = None
+    # Second detector family (rhetoric_ext): the constructions that passed the
+    # first family and were still called machine-written on sight. Also carries
+    # any first-family flags demoted to rate gates for this author.
+    rhetoric_ext: "rhetoric_ext_mod.RhetoricExtReport | None" = None
 
     @property
     def fit_off(self) -> bool:
@@ -529,6 +550,8 @@ class ScrubReport:
             flags.append("way-simile")
         if self.rhetoric and self.rhetoric.declarative_ratings:
             flags.append("declarative-rating")
+        if self.rhetoric_ext:
+            flags.extend(self.rhetoric_ext.hard_flags)
         return flags
 
     @property
@@ -569,6 +592,7 @@ def analyze(
     fp: "Fingerprint | None" = None,
     pres: "presence_mod.PresenceCalibration | None" = None,
     rhet: "rhetoric_mod.RhetoricCalibration | None" = None,
+    ext: "rhetoric_ext_mod.RhetoricExtCalibration | None" = None,
 ) -> ScrubReport:
     """Score a draft against a calibration.
 
@@ -624,8 +648,15 @@ def analyze(
         rhet or rhetoric_mod.RhetoricCalibration(
             cleft_p95=cal.cleft_p95, antithesis_p95=cal.antithesis_p95,
             it_is_p95=cal.it_is_p95,
+            chain_len=cal.chain_len, chain_p95=cal.chain_p95,
             cleft_p25=cal.cleft_p25, antithesis_p25=cal.antithesis_p25,
         ),
+    )
+    # Runs after the first family on purpose: with a calibrated `ext` it moves
+    # any demoted first-family spans off rep.rhetoric, so hard_flags below sees
+    # them only when they exceed the author's own rate.
+    rep.rhetoric_ext = rhetoric_ext_mod.analyze(
+        text, ext or rhetoric_ext_mod.RhetoricExtCalibration(), first_family=rep.rhetoric,
     )
 
     if detect:
@@ -689,6 +720,8 @@ def render(rep: ScrubReport, author: str = "the author") -> str:
         # render_lines already frames leakage as its own [HIGH] line, distinctly from
         # the [MEDIUM] tics -- see rhetoric.render_lines. Nothing to add here.
         style.extend(rhetoric_mod.render_lines(rep.rhetoric))
+    if rep.rhetoric_ext:
+        style.extend(rhetoric_ext_mod.render_lines(rep.rhetoric_ext, author))
     if rep.fit_off or rep.fit_drifting:
         drift = ", ".join(
             f"{name} {abs(z):.1f} SD {'above' if z > 0 else 'below'} corpus"
