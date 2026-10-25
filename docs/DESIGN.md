@@ -1,6 +1,6 @@
 # Mimesis v2 — Design
 
-One voice engine, N voices, discriminator in the loop. Companion system to ClaudeMind (LKHS): ClaudeMind is memory, Mimesis is voice. Personal instance runs Patrick's voices; the repo ships clean with zero personal data by construction.
+One voice engine, N voices, discriminator in the loop. Companion system to ClaudeMind (LKHS): ClaudeMind is memory, Mimesis is voice. A personal install runs its owner's voices; the repo ships clean with zero personal data by construction.
 
 ## Thesis (grounded)
 
@@ -79,7 +79,7 @@ Mimesis/
     cli.py                  # mimesis profile new|list|use / ingest / calibrate / compose / scrub / eval / doctor
   profiles/
     example/                # checked-in template: config.json, VOICE.md guide skeleton, empty source_documents/
-    (patrick voices live here locally, gitignored)
+    (your own voices live here locally, gitignored)
   docs/DESIGN.md            # this file
   scripts/register-mcp.ps1 / .sh   # adds server to claude mcp config as 'mimesis' (refuses to overwrite one pointing elsewhere)
 ```

@@ -569,9 +569,11 @@ class ScrubReport:
     def presence_missing(self) -> bool:
         """No first-person reading and nothing that ran against expectation.
 
-        Reported as a hard problem rather than an advisory because it is the failure mode a clean
-        fingerprint cannot see: the draft matches the author's distribution and still has no author
-        in it.
+        It is the failure mode a clean fingerprint cannot see: the draft matches the author's
+        distribution and still has no author in it. It still keeps a draft from reading CLEAN, but
+        since 2026-10-25 it renders at MEDIUM with advice not to insert stance phrases: the author
+        rejected formulaic presence lines by name, and Pangram labels added interpretation of the
+        paper's own results as AI (presence.ADVICE has both sources).
         """
         p = self.presence
         if not p or not p.get("measurable"):

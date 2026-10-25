@@ -104,11 +104,35 @@ mimesis add myvoice --from ~/more-writing      # add more later; always rebuilds
 | `scrub_ai_footprint` | the final check on any draft |
 | `eval_voice` | fingerprint distribution for a voice |
 | `record_preference` | log a kept, rejected or corrected draft |
+| `edit_own_text`, `apply_own_edits` | fix a draft you wrote, inside your sentences only |
 
 Pass `voice=` on every call. Write the two candidates from opposed structural
 briefs: across about twenty gated sections, four candidates off one brief
 covered 19-55% of the author's own variety, and two off opposed briefs covered
 86-148%.
+
+### Editing your own writing
+
+When the text is something you wrote, composing is the wrong tool: it replaces
+your sentences with the model's. `edit_own_text` and `apply_own_edits`
+(CLI: `mimesis own-edit`) fix what the scrubber flags inside your sentences and
+nowhere else. The limits are enforced in code, not asked for in a prompt: one
+sentence in, one sentence out; at least 60% of each sentence kept and at most
+six words added; numbers and citations unchanged; and the whole text held at
+0.93 token similarity or above. Edits that break a limit are refused, with the
+reason, and the result comes back as a word diff.
+
+In detector testing on research prose, word fixes inside an author's sentences
+kept a Human label while rebuilt or added sentences flipped it, and one flipped
+sentence took about 280 surrounding words with it. For research voices the
+scrub report also marks the sentences whose content type the detector read as
+AI in any wording, so you can write those yourself. Evidence, limits and how
+to check the report on your own scans: `docs/DETECTION.md`.
+
+```bash
+mimesis own-edit myvoice draft.md                    # numbered sentences and what is flagged
+mimesis own-edit myvoice draft.md --generate --out fixed.md
+```
 
 `docs/GLOBAL_CLAUDE.md` is an optional block for `~/.claude/CLAUDE.md` that
 sends "write this in my voice" to these tools from any folder. `CLAUDE.md` is
@@ -172,7 +196,8 @@ system gets.
 `CLAUDE.md` operating guide · `UPGRADE.md` upgrading an older install ·
 `docs/DESIGN.md` design · `docs/DETECTORS.md` rhetorical detectors ·
 `docs/STRUCTURE_GATES.md` structural measures · `docs/RESEARCH_WRITING.md`
-research guidance packs · `evals/` evaluation harness and findings.
+research guidance packs · `docs/DETECTION.md` AI detectors and editing your
+own writing · `evals/` evaluation harness and findings.
 
 No fine-tuning, no detector evasion as a product claim, no cloud services.
 

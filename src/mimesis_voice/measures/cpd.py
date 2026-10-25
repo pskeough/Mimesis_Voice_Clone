@@ -12,7 +12,7 @@ not cosmetic at this scale: B's ceiling is near 1 - 2/sqrt(n), and passages here
 carry 20-60 sentences.
 
 The 1.7B base was the most regular writer in the study at A_n -0.50 against
-Patrick's -0.38, and it is the cell he called monotonous. Replicate floor 0.014,
+the private author's -0.38, and it is the cell they called monotonous. Replicate floor 0.014,
 effect 10.4x it.
 
 Lag-1 and lag-3 autocorrelation of sentence length were in the study's version

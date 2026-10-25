@@ -144,3 +144,14 @@ def test_corpus_only_classes_are_never_gated():
     rates and would flag every extended draft."""
     cal = presence.calibrate([TERSE_REAL * 3])
     assert "signpost" not in cal.floors
+
+
+def test_absence_is_advisory_and_hands_out_no_stock_phrases():
+    """2026-10-25: the author named inserted presence lines 'the most AI generated slot', and
+    Pangram labels added own-result interpretation as AI. The line stays, at MEDIUM, and must
+    not tell the writer which phrase to insert."""
+    lines = presence.render_lines(presence.analyze(FLAT))
+    assert lines and all(not ln.startswith("- [HIGH]") for ln in lines)
+    joined = " ".join(lines).lower()
+    for stock in ("we read this as", "the pattern suggests", "we had expected"):
+        assert stock not in joined

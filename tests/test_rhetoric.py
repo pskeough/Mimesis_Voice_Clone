@@ -358,7 +358,7 @@ def test_both_are_hard_flags():
 
 # --- comma-spliced clause chains (added 2026-09-03) ---------------------------
 #
-# docs/AUTHOR_FEEDBACK.md section 7 carried this as "the largest known gap": named
+# The reference author's feedback log carried this as "the largest known gap": named
 # by the author in every voice profile and undetectable, because the fingerprint's
 # commas_per_sent is a MEAN and six clauses chained in one sentence give the same
 # number as six clean sentences.

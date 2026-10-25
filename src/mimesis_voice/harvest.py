@@ -72,9 +72,9 @@ AUTHOR_EDIT_MIN_RATIO = 0.45
 
 _WORD = re.compile(r"[A-Za-z']+")
 
-# The author's own rejection vocabulary, taken from docs/AUTHOR_FEEDBACK.md and
-# from transcripts, not invented. These label a draft's fate only when they land
-# in the user turn immediately after it. Everything else stays unlabeled: his
+# The author's own rejection vocabulary, taken from the reference author's feedback
+# log and from transcripts, not invented. These label a draft's fate only when they land
+# in the user turn immediately after it. Everything else stays unlabeled: their
 # persona record says continuation is the approval, and silence is too weak a
 # signal to spend a fingerprint slot on.
 _REJECT_MARKERS = (

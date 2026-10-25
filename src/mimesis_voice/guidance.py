@@ -2,7 +2,7 @@
 
 Every other block in the compose kit answers "does this read like the author".
 None of them can say what an abstract is for, why a Discussion fails, or in what
-order a Related Work paragraph earns its citations. The 2026-09-04 ML4H session
+order a Related Work paragraph earns its citations. A 2026-09-04 drafting session
 made the gap measurable: a Discussion scored fit 0.201 with zero hard flags and
 was rejected in one line ("a bunch of nothing. What are we discussing here?"),
 and a Related Work at fit 0.105 was rejected as "an AI report and not a research
@@ -116,6 +116,12 @@ def block(task: str, profile: config.Profile, fmt: str | None = None) -> str:
     common = _read(GUIDANCE_DIR / genre / "_common.md", _COMMON_MAX_CHARS)
     if common:
         parts.append(common)
+    # Detector-facing content rules for the genre, when the pack ships them. Kept
+    # apart from _common.md because its evidence is Pangram scans, not writing
+    # guides, and it must be removable without touching the craft principles.
+    detection = _read(GUIDANCE_DIR / genre / "_detection.md", _CARD_MAX_CHARS)
+    if detection:
+        parts.append(f"### What the AI detector reads as machine-written in this genre\n{detection}")
     if move:
         card = _read(GUIDANCE_DIR / genre / f"{move}.md", _CARD_MAX_CHARS)
         if card:

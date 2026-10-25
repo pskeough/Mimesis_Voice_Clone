@@ -22,8 +22,11 @@ Never imitate my voice from memory. If the tools are not connected, say so.
 2. For anything I will send or publish: compose_slate(voice=...) with two
    candidates written from opposed structural briefs, then gate_candidates.
    compose_in_voice is fine for a quick draft.
-3. Run scrub_ai_footprint(voice=...) on the final text and fix every flag.
-4. Show me the draft and the scrub report. When I keep, reject or correct a
+3. When the text is something I wrote and the job is to fix it, do not compose:
+   call edit_own_text(text=..., voice=...) and then apply_own_edits. It edits
+   inside my sentences only and enforces the limits in code.
+4. Run scrub_ai_footprint(voice=...) on the final text and fix every flag.
+5. Show me the draft and the scrub report. When I keep, reject or correct a
    draft, call record_preference.
 ```
 

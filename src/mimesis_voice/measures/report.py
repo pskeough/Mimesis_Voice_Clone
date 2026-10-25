@@ -8,7 +8,7 @@ would hide it here.
 
 Every line is REPORTING, not a hard flag. The hard flags in `scrub.py` are
 constructions the author rejected by name, measured at under 0.3 per 1,000 words
-in his own corpus. These are bands fitted to a corpus, and a band at two
+in their own corpus. These are bands fitted to a corpus, and a band at two
 standard deviations flags a twentieth of the author's own writing by
 construction. `DETECTORS.md`'s rule -- a check that fires on the author's real
 prose is measuring the author -- is why they report instead of blocking, and the
@@ -83,7 +83,7 @@ def _first_paragraphs(text: str, n: int) -> str:
 
 def _fp(cal: StructureCalibration, key: str) -> str:
     """The measured share of the author's own units this line flags, when it
-    fires. A line that flags 18% of his real writing has said less than one
+    fires. A line that flags 18% of their real writing has said less than one
     that flags 3%, and the reader should be told which they are looking at."""
     r = cal.self_flag.get(key)
     return f"; flags {r:.0%} of the author's own pieces" if r is not None else ""

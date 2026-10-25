@@ -1088,7 +1088,7 @@ def find_declarative_ratings(text: str) -> list[str]:
 # Named by the reference author in every voice profile and never previously
 # detectable: "the over use of commas, that I could, and I preferred, and I am";
 # "run on commas and flowery vocab"; "really long overwrought commas". The reason
-# no check existed is recorded in docs/AUTHOR_FEEDBACK.md section 7 -- the
+# no check existed is recorded in the reference author's feedback log (local, not shipped) -- the
 # fingerprint carries `commas_per_sent`, which is a MEAN, and a mean cannot see
 # accumulation. Six clauses chained inside one sentence and six clean sentences
 # produce the same number. Nothing else in this package looks at the shape of the

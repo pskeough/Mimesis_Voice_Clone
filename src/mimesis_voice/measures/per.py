@@ -9,8 +9,8 @@ restatement that reuses no whole phrase:
     Because we are terrible parents... Because we do not... Because we are not...
 
 The study's primary coherence row. Authors run 0.01-0.04; every model run sat
-above that, and on the blind item Patrick ruled on, the candidate he said lost
-the story scored 0.167 against 0.000 for the one he picked (item-1 coherence
+above that, and on the blind item the private author ruled on, the candidate they said
+lost the story scored 0.167 against 0.000 for the one they picked (item-1 coherence
 rank correlation +0.95). Replicate floor 0.011, adapter effect 5.9x it.
 
 Computed over 600-word windows. Uncapped, the rate correlates +0.41 with word
@@ -20,7 +20,7 @@ passages as incoherent for being long.
 The study took the first 600 words and stopped, which is right for ranking
 thousands of cells against each other and wrong for gating one draft: a model
 that loops does it late, and truncating discards the half of the draft where the
-looping is. On the blind item, the candidate Patrick said lost the story scores
+looping is. On the blind item, the candidate the author said lost the story scores
 0.167 whole, 0.000 on its first 600 words, and 0.200 on its worst window. So the
 draft is scored in 600-word windows at a 300-word stride and the worst window is
 reported. Every window is exactly the object the study validated -- a passage of

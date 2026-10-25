@@ -1,6 +1,6 @@
 """Genre guidance block: present only when configured, scoped to one move, capped.
 
-Added 2026-09-06 after the ML4H rev6 ledger showed the gate passing a Discussion
+Added 2026-09-06 after a paper-revision ledger showed the gate passing a Discussion
 (fit 0.201, no hard flags) that the author rejected in one line as "a bunch of
 nothing". The kit had no block pointed at what a section is for. These tests pin
 the three properties that keep the new block from becoming the next burstiness
@@ -133,3 +133,12 @@ def test_kit_carries_structure_block_between_rules_and_anchors(tmp_path, monkeyp
     i_anch = kit.index("## ANCHORS")
     assert i_rules < i_struct < i_anch
     assert "### This passage is a limitations" in kit
+
+
+def test_research_pack_carries_the_detection_card(tmp_path):
+    """Pangram content rules ride with the genre, after the common principles."""
+    prof = _profile(tmp_path, "research")
+    out = guidance.block("write the discussion paragraph", prof)
+    i_det = out.index("### What the AI detector reads as machine-written")
+    assert out.index("### This passage is a discussion") > i_det
+    assert "[AUTHOR:" in out

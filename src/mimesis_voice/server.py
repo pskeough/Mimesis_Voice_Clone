@@ -4,6 +4,8 @@ Setup: ``list_voices``, ``inspect_corpus``, ``create_voice``.
 Writing: ``compose_slate`` + ``gate_candidates`` (gated), ``compose_in_voice``
 (kit only), ``get_voice_guide``, ``retrieve_style_examples``,
 ``retrieve_transform_demos``.
+Editing the author's own text: ``edit_own_text`` + ``apply_own_edits``
+(minimal diff, limits enforced in code).
 Checking and learning: ``scrub_ai_footprint``, ``eval_voice``, ``record_preference``.
 
 Registered with Claude Code as ``mimesis`` by ``scripts/register-mcp.*``.
@@ -207,7 +209,8 @@ def retrieve_transform_demos(query_text: str, k: int = 4, voice: str | None = No
         "Follow the protocol, run scrub_ai_footprint, then present. Pass voice=NAME to target a "
         "profile, format=MOVE (e.g. discussion, related_work, abstract) to name the rhetorical "
         "slot when the task text does not. No discriminator: when the output matters use "
-        "compose_slate + gate_candidates. If no voice is set up, returns the intake protocol."
+        "compose_slate + gate_candidates. To fix a draft the author wrote, use edit_own_text "
+        "instead: this tool writes new sentences. If no voice is set up, returns the intake protocol."
     )
 )
 def compose_in_voice(
@@ -316,7 +319,8 @@ def scrub_ai_footprint(text: str, source: str | None = None, voice: str | None =
         prof, text, "scrub",
         verdict=",".join(rep.hard_flags) if getattr(rep, "hard_flags", None) else "clean",
     )
-    return "\n".join([scrub_mod.render(rep, prof.name), _structure_block(prof, text)])
+    return "\n".join([scrub_mod.render(rep, prof.name), _structure_block(prof, text)]
+                     + _detection_block(prof, text))
 
 
 @mcp.tool(
@@ -375,6 +379,22 @@ def record_preference(
     return f"Recorded {kind} for voice '{prof.slug}'."
 
 
+def _detection_block(prof, text: str) -> list[str]:
+    """Pangram content-type risk, for research-genre voices only.
+
+    Reporting only, like the structure block. The lab evidence behind it is all
+    research prose, so other forms get nothing rather than an untested claim.
+    """
+    try:
+        from . import contentrisk
+        from . import guidance as guidance_mod
+        if guidance_mod.genre_for(prof) != "research":
+            return []
+        return [contentrisk.render(contentrisk.analyze(text))]
+    except Exception:
+        return []
+
+
 def _structure_block(prof, text: str) -> str:
     """The structural report for one draft, or a line saying why there is none.
 
@@ -417,7 +437,7 @@ def _structure_flags(cal, text: str) -> str:
         "candidate drafts (default 2) from deliberately OPPOSED structural briefs. Write all N, "
         "then pass them to gate_candidates, which scores and picks. Use this instead of "
         "compose_in_voice whenever the output matters: compose_in_voice has no discriminator. "
-        "Always pass voice=NAME."
+        "Not for editing a draft the author wrote (use edit_own_text). Always pass voice=NAME."
     )
 )
 def compose_slate(
@@ -587,6 +607,83 @@ def gate_candidates(
             verdict="winner" if c is winner else "loser",
         )
     return "\n".join(out)
+
+
+# --- minimal-diff editing of the author's own text ----------------------------
+#
+# The compose tools generate. These two edit text the author already wrote,
+# inside its sentences only, with every limit enforced in ownedit.apply_edits.
+# In testing, edits inside human sentences kept a Human label (polish at >= 0.90
+# token similarity 12/12) while rebuilt or added sentences flipped it.
+
+
+def _own_edit_setup(voice: str | None):
+    prof, err = _profile(voice)
+    if err:
+        return None, None, None, err
+    if not prof.scrub_path.exists():
+        return None, None, None, f"'{prof.slug}' is not calibrated yet. Run: mimesis calibrate {prof.slug}"
+    from . import gate as gate_mod
+    cal = ScrubCalibration.load(prof.scrub_path)
+    return prof, cal, gate_mod._allow_dashes(cal), None
+
+
+@mcp.tool(
+    description=(
+        "Edit text the author WROTE THEMSELVES, minimally, step 1 of 2. Use this instead of "
+        "compose_slate or compose_in_voice whenever the input is the author's own draft (a "
+        "paragraph, section or email they wrote) and the job is to fix problems in it, not to "
+        "rewrite it. Returns every sentence numbered with the scrubber flags located on it, a "
+        "Pangram detection-risk report (which sentences carry content types Pangram labels AI, "
+        "for the author to rewrite), the edit limits, and the protocol. scope: 'hard' (default; "
+        "only hard-flagged sentences), 'flagged' (any flag, including advisory ones that often "
+        "mark the author's own habits), 'goal' (any sentence, each op states its reason). Then "
+        "call apply_own_edits."
+    )
+)
+def edit_own_text(text: str, goal: str | None = None, voice: str | None = None,
+                  scope: str = "hard") -> str:
+    if not config.is_enabled():
+        return _DISABLED
+    if not text or not text.strip():
+        return "Pass text=<the author's own draft>."
+    prof, cal, allow, err = _own_edit_setup(voice)
+    if err:
+        return err
+    from . import ownedit
+    scope = scope if scope in ownedit.SCOPES else "hard"
+    infos = ownedit.flag_sentences(text, cal, ext=rhetoric_ext_mod.load_for(prof), allow_dashes=allow)
+    _log_event(prof, "own_edit_kit", task=(goal or "")[:300] or None, chars=len(text), scope=scope)
+    return ownedit.render_kit(text, infos, prof.name, prof.slug, goal, scope, ownedit.DEFAULT_FLOOR)
+
+
+@mcp.tool(
+    description=(
+        "Edit the author's own text, step 2 of 2. Applies sentence-internal edits "
+        "[{n, text, fixes}] from edit_own_text under limits enforced in code: one sentence in, "
+        "one out (no merge, split or insert); >= 60% of each sentence's words kept in order and "
+        "<= 6 added; numbers, citations and dashes unchanged; no new hard flag, banned word or "
+        "detection-risk move; whole-text token similarity >= floor (default 0.93, never below "
+        "0.90) and every Pangram-sized window >= 0.85. Refuses ops that break a limit. Returns "
+        "the word diff, provenance, refused ops, remaining flags and the edited text."
+    )
+)
+def apply_own_edits(text: str, edits: list[dict], voice: str | None = None,
+                    scope: str = "hard", floor: float = 0.93, goal: str | None = None) -> str:
+    if not config.is_enabled():
+        return _DISABLED
+    if not text or not text.strip():
+        return "Pass text=<the exact text given to edit_own_text>."
+    prof, cal, allow, err = _own_edit_setup(voice)
+    if err:
+        return err
+    from . import ownedit
+    res = ownedit.apply_edits(text, edits or [], cal, ext=rhetoric_ext_mod.load_for(prof),
+                              scope=scope, floor=floor, allow_dashes=allow)
+    _log_event(prof, "own_edit_apply", task=(goal or "")[:300] or None, applied=len(res.applied),
+               refused=len(res.refused), sim=round(res.section_sim, 4),
+               window_min=round(res.min_window_sim, 4), scope=res.scope)
+    return ownedit.render_result(res, prof.name)
 
 
 # --- setup ---------------------------------------------------------------------

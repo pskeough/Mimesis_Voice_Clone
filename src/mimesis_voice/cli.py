@@ -849,6 +849,59 @@ def cmd_scrub(args) -> int:
     # well as in the MCP tool so the two surfaces say the same thing about the
     # same draft.
     print(structure_report.render(text, structure_mod.load_for(prof), prof.name))
+    from . import guidance as guidance_mod
+    if guidance_mod.genre_for(prof) == "research":
+        from . import contentrisk
+        print(contentrisk.render(contentrisk.analyze(text)))
+    return 0
+
+
+def cmd_own_edit(args) -> int:
+    """Minimal-diff edit of a file the author wrote (ownedit). Without --ops or
+    --generate it prints the kit: numbered sentences, located flags, risk report."""
+    import json as _json
+    import re as _re
+
+    from . import gate as gate_mod
+    from . import ownedit
+
+    prof = _resolve(args.name)
+    if not prof.scrub_path.exists():
+        print(f"'{prof.slug}' is not calibrated. Run: mimesis calibrate {prof.slug}")
+        return 1
+    cal = scrub_mod.ScrubCalibration.load(prof.scrub_path)
+    ext = rhetoric_ext_mod.load_for(prof)
+    allow = gate_mod._allow_dashes(cal)
+    text = Path(args.file).read_text(encoding="utf-8")
+    import math as _math
+    floor = args.floor if _math.isfinite(args.floor) else ownedit.DEFAULT_FLOOR
+    floor = min(max(floor, ownedit.MIN_FLOOR), 0.995)   # what apply_edits will enforce
+    infos = ownedit.flag_sentences(text, cal, ext=ext, allow_dashes=allow)
+    kit = ownedit.render_kit(text, infos, prof.name, prof.slug, args.goal, args.scope, floor)
+    if args.ops:
+        edits = _json.loads(Path(args.ops).read_text(encoding="utf-8"))
+    elif args.generate:
+        try:
+            raw = gate_mod.claude_generate(
+                kit + "\n\nReturn only the JSON list of edits, nothing else.", model=args.model)
+        except RuntimeError as e:
+            print(f"claude -p failed: {e}")
+            return 1
+        m = _re.search(r"\[.*\]", raw, _re.S)
+        try:
+            edits = _json.loads(m.group(0)) if m else []
+        except _json.JSONDecodeError as e:
+            print(f"could not parse the proposed edits as JSON ({e}); raw output follows.\n{raw}")
+            return 1
+    else:
+        print(kit)
+        return 0
+    res = ownedit.apply_edits(text, edits, cal, ext=ext, scope=args.scope, floor=floor,
+                              allow_dashes=allow)
+    print(ownedit.render_result(res, prof.name))
+    if args.out:
+        Path(args.out).write_text(res.edited, encoding="utf-8")
+        print(f"\nwrote {args.out}")
     return 0
 
 
@@ -1121,6 +1174,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_scrub.add_argument("--source", default=None, help="source file for fidelity audit")
     p_scrub.add_argument("--detect", action="store_true")
 
+    p_own = sub.add_parser(
+        "own-edit", help="minimal-diff edit of text the author wrote (sentence-internal, limits in code)")
+    p_own.add_argument("name", help="voice")
+    p_own.add_argument("file", help="the author's own draft (.txt, .md or .tex)")
+    p_own.add_argument("--goal", default=None)
+    p_own.add_argument("--scope", default="hard", choices=["hard", "flagged", "goal"])
+    p_own.add_argument("--floor", type=float, default=0.93, help="whole-text similarity floor (min 0.90)")
+    p_own.add_argument("--ops", default=None, help="JSON file of edits [{n, text, fixes}] to apply")
+    p_own.add_argument("--generate", action="store_true", help="have claude -p propose the edits")
+    p_own.add_argument("--model", default="sonnet")
+    p_own.add_argument("--out", default=None, help="write the edited text here")
+
     p_eval = sub.add_parser("eval")
     p_eval.add_argument("name", nargs="?", default=None)
     p_eval.add_argument("--held-out", type=int, default=5)
@@ -1164,6 +1229,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_compose(args)
     if args.cmd == "scrub":
         return cmd_scrub(args)
+    if args.cmd == "own-edit":
+        return cmd_own_edit(args)
     if args.cmd == "eval":
         return cmd_eval(args)
     if args.cmd == "audit":

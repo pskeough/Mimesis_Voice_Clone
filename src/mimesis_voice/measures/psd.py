@@ -11,9 +11,9 @@ Replicate floor 0.024, effect 11.4x it, and the author-vs-base separation held
 on 9 of 9 authors at d >= 0.5.
 
 This is an architecture outcome, not a quality one, and the study is explicit
-about the difference. On the blind item Patrick ruled on, the cell he preferred
-over-varied its paragraphs badly (CV 0.79 against the source's 0.34) and he
-still preferred it, so the measure disagrees with the reader in that direction.
+about the difference. On the blind item the private author ruled on, the cell they
+preferred over-varied its paragraphs badly (CV 0.79 against the source's 0.34)
+and they still preferred it, so the measure disagrees with the reader in that direction.
 That is why the gate line is a two-sided band around the author's own CV and
 why it is reported as a band rather than as a score: it says the paragraphing
 is unlike the author's, not that the passage is worse.

@@ -14,7 +14,7 @@ Three upgrades to the Mimesis v2 engine, each measured against the current
 
 Generator/judge model for every engine `claude -p` call: `sonnet` (held constant
 across all arms, matching the README baseline). Coding/analysis model: Opus 4.8.
-This is R&D on Patrick's own voices; no corpus text is reproduced here — only
+This is R&D on the maintainer's own voices; no corpus text is reproduced here — only
 numbers.
 
 ## Method notes (honesty controls)
@@ -139,7 +139,7 @@ identical):
 | creative | 0.650 | high = machine | 1.004 | 1.032 | 97 / 7 |
 
 **Key finding — the canonical direction does not transfer.** With a small
-same-size base+instruct pair, generic AI text scores *higher* than Patrick's real
+same-size base+instruct pair, generic AI text scores *higher* than the author's real
 writing, the *opposite* of the Falcon-7B "low = machine" convention (canonical-low
 AUROC 0.325 / 0.350). The calibration is direction-aware and learns "high =
 machine" empirically. Even then the pair is a **weak** detector here (AUROC

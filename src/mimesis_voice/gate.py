@@ -343,6 +343,10 @@ def build_kit(
     manuscript with 9.8% less sentence-length variance than the one it replaced.
     """
     extra = ""
+    # The rhythm constraint is a voice-fit rule. It used to justify itself as "the
+    # single strongest signal that prose was machine-written", which detector
+    # testing contradicts: sentence length changed no Pangram label, and
+    # the label follows content type. The constraint stays; the claim went.
     if source:
         prose = textnorm.to_prose(source, markup)
         lens = [len(s.split()) for s in re.split(r"(?<=[.!?])\s+", prose)
@@ -359,8 +363,8 @@ def build_kit(
                 f"Keep that spread. Do not split the long sentences into medium ones "
                 f"and do not pad the short ones. A rewrite that lowers the standard "
                 f"deviation is rejected even when every sentence in it is an "
-                f"improvement, because uniform sentence length is the single "
-                f"strongest signal that prose was machine-written."
+                f"improvement, because uniform sentence length moves the draft away "
+                f"from the author's measured rhythm."
             )
     # Structure block sits between the voice rules and the anchors: after the
     # rules so the voice block keeps first position, before the anchors so the

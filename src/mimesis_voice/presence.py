@@ -271,17 +271,31 @@ def analyze(text: str, cal: PresenceCalibration | None = None) -> dict:
 # Repair guidance per class. Deliberately concrete: "add authorial presence" is not actionable, and
 # a writer told to hedge more will produce mush. Each line names the move and warns off the failure
 # mode of overdoing it.
+#
+# The epistemic and expectation lines used to hand the writer stock phrases ("we read this as",
+# "the pattern suggests", "we had expected X and found Y"). Two findings retired them:
+#   - 2026-09-04, a paper revision: inserting those phrases mechanically produced a sentence the
+#     author picked out on sight as the most machine-sounding one in the draft. The author's rule:
+#     presence comes from an actual interpretation, or not at all.
+#   - Detection study, Oct 2026 (docs/DETECTION.md): interpretation of the paper's own results is
+#     a content type Pangram labels AI whatever the wording, and one caught sentence can take
+#     ~280 words with it.
+# So the absence is reported, at MEDIUM, and the advice says who supplies the fix: the author.
+_NO_INSERT = (
+    "Do not clear this line by inserting a stance or interpretation phrase. In research prose an "
+    "added interpretation sentence is a content type Pangram labels AI in testing, "
+    "and a formulaic one is a construction the author rejected by name. If the passage reports, "
+    "leaving it reporting is a valid outcome"
+)
+
 ADVICE: dict[str, str] = {
     "epistemic": (
-        "no first-person reading of the evidence. Somewhere the text should say what you make of a "
-        "result, not only what the result is: \"we read this as\", \"we take it to mean\", "
-        "\"the pattern suggests\". Attach these to interpretations you actually hold"
+        "no first-person reading of the evidence. If the author holds an interpretation of a result, "
+        "it belongs in one sentence in the author's own words. " + _NO_INSERT
     ),
     "expectation": (
-        "nothing in the draft ran against expectation. Real work surprises its author. Where a "
-        "result contradicted what you set out to find, say so: \"we had expected X and found Y\". "
-        "Only where it is true, and it is worth checking whether the absence means the draft is "
-        "reporting rather than arguing"
+        "nothing in the draft ran against expectation. Where a result really did contradict what the "
+        "work set out to find, the author can say so. " + _NO_INSERT
     ),
     "stance": (
         "every claim is stated at the same strength. Mark the ones you are less sure of, and say "
@@ -312,16 +326,14 @@ def render_lines(res: dict, author: str = "the author") -> list[str]:
     absent = res.get("absent", [])
     if "epistemic" in absent and "expectation" in absent:
         out.append(
-            f"- [HIGH] Nobody is visibly thinking in this draft. Across {res['n_words']:,} words "
+            f"- [MEDIUM] Nobody is visibly thinking in this draft. Across {res['n_words']:,} words "
             f"there is no point where {author} finds, reads, doubts, or is surprised by anything. "
-            f"Prose can clear every other check here and still read as machine-written for this "
-            f"reason alone, and it is the one tell that is an absence rather than a pattern. "
-            f"{_sentence(ADVICE['epistemic'])}."
+            f"Advisory: {_sentence(ADVICE['epistemic'])}."
         )
     else:
         for k in absent:
-            out.append(f"- [HIGH] No {k} presence at all in {res['n_words']:,} words. "
-                       f"{_sentence(ADVICE[k])}.")
+            out.append(f"- [MEDIUM] No {k} presence at all in {res['n_words']:,} words. "
+                       f"Advisory: {_sentence(ADVICE[k])}.")
     for k, got, floor in res["missed"]:
         if k in absent:
             continue

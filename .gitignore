@@ -92,11 +92,14 @@ evals/*/
 !evals/specs_example/
 evals/*.log
 
-# The author-feedback ledger quotes the author's own corpus and his verbatim
+# The author-feedback ledger quotes the author's own corpus and their verbatim
 # judgments on drafts. Same rule as profiles/: personal data by construction.
 # The shippable version of the same material is docs/DETECTORS.md, which carries
 # the constructions and the measured rates with no corpus text in it.
 docs/AUTHOR_FEEDBACK.md
+# Per-install notes (plans, scan logs, paths to one person's papers) go in
+# docs/local/. The shippable methodology is docs/DETECTION.md.
+docs/local/
 
 # Retired profiles are still profiles: third-party corpora (client manuscripts,
 # their social posts) live here after being taken out of rotation. The

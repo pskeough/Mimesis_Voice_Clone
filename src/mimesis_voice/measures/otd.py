@@ -14,7 +14,7 @@ synopsis-mode paragraph:
 
 Chesterton's base model opened 40% of its sentences on a noun phrase against
 his own 21%; the adapters ran 17-19%. Replicate floor 0.005, adapter effect
-0.074, and the class order reproduced Patrick's blind style ranking on item 1
+0.074, and the class order reproduced the private author's blind style ranking on item 1
 at rho +0.80. It correlates only 0.46 with the package's existing opener
 monotony, so both are kept.
 

@@ -236,6 +236,13 @@ The MCP server exposes:
 | `scrub_ai_footprint` | the final pass on every draft |
 | `eval_voice` | fingerprint distribution for a voice |
 | `record_preference` | the person kept, rejected or corrected a draft |
+| `edit_own_text` + `apply_own_edits` | fixing text the person wrote: edits inside their sentences only, limits enforced in code (`ownedit.py`) |
+
+**Editing the person's own text is not composing.** When the input is a draft
+they wrote, use `edit_own_text` + `apply_own_edits` (CLI: `mimesis own-edit`).
+Every compose path writes new sentences; detector testing found that rebuilt
+sentences flip a Human label and word fixes inside the author's sentences do
+not. `docs/DETECTION.md` has the evidence and the limits.
 
 `mimesis compose` runs the whole loop headless by calling `claude -p`.
 

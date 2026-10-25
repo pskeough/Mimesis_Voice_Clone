@@ -177,8 +177,8 @@ sentence-to-sentence length jumps, which is the long/short alternation seen from
 another angle.
 
 Both gates are calibrated the same way, as the leave-one-out p95 of the author's
-own pieces, so 5% of his real writing exceeds either by construction. A gate that
-5% of his writing trips and 87% of generated drafts trip is separating; the v1
+own pieces, so 5% of their real writing exceeds either by construction. A gate that
+5% of their writing trips and 87% of generated drafts trip is separating; the v1
 number is not evidence the drafts are fine, it is evidence v1 cannot see this.
 
 That is a larger lever than anything in this document. The structural measures
@@ -211,7 +211,7 @@ Each note names the evidence rather than the number, because a model can act on
   1.3-1.4. Unwinsorised the ratio of 2.4 is carried entirely by extreme cells,
   which is a list of extreme cells with the labels removed, not a gate.
 - **The judge rubric's craft block.** Both judges ranked the 14B bare model
-  above the private author's own prose and above the cell he chose blind. As a
+  above the private author's own prose and above the cell they chose blind. As a
   construction instrument the rubric passes; as a voice or quality criterion it
   fails on exactly the case this package exists for.
 - **Detector-tell dissociation.** The study's own prediction failed: adapters
@@ -320,7 +320,7 @@ with word count and up to +0.57 on the 1.7B runs — and wrong for gating one
 draft, because a model that loops does it late and the truncation discards the
 half of the draft where the looping is.
 
-On the blind item, the candidate Patrick said lost the story scores:
+On the blind item, the candidate the private author said lost the story scores:
 
 | | whole draft | first 600 words | worst 600-word window |
 |---|---:|---:|---:|
@@ -349,13 +349,13 @@ cells per author, 2026-09-09.
 
 | author | cal units | z ≥ 2 (FP/catch) | z ≥ 3 (FP/catch) | > corpus max (FP/catch) |
 |---|---:|---|---|---|
-| patrick_v2 | 150 | 22% / 67% | **2% / 54%** | 2% / 31% |
+| private author | 150 | 22% / 67% | **2% / 54%** | 2% / 31% |
 | chesterton | 318 | 16% / 17% | **6% / 13%** | 2% / 6% |
 | mansfield | 151 | 6% / 60% | **0% / 50%** | 0% / 40% |
 | wharton | 234 | 12% / 83% | **0% / 73%** | 0% / 51% |
 | chopin | 97 | 28% / 74% | **8% / 60%** | 4% / 56% |
 
-A rule at the author's own 99th percentile was also scored on patrick_v2: 8%
+A rule at the author's own 99th percentile was also scored on the private author: 8%
 false positives for the same 54% catch rate as z ≥ 3, so it is dominated.
 
 `DETECTORS.md`'s rule is that a check touching more than 15% of an author's own
@@ -372,7 +372,7 @@ author, not a reason to loosen the cut.
 
 ## Agreement with the author's blind ruling
 
-The blind item Patrick ruled on, four candidates, key withheld until he ruled:
+The blind item the private author ruled on, four candidates, key withheld until they ruled:
 **D best; B lost the story; A and C regressive** (A = 1.7B base, B = 1.7B
 adapter, C = 4B base, D = 4B adapter). Scored with a calibration built by this
 package from that author's own REF+TRAIN pieces:
@@ -380,9 +380,9 @@ package from that author's own REF+TRAIN pieces:
 | | coherence | openers | lines flagged |
 |---|---|---|---|
 | the author's own passage | 0.000, under 0.082 | 0.399, under 0.496 | — |
-| A (1.7B base) | 0.000 | **0.502 over 0.464**, PRON at 47% vs his 26% | openers, paragraphs, vocabulary |
+| A (1.7B base) | 0.000 | **0.502 over 0.464**, PRON at 47% vs the author's 26% | openers, paragraphs, vocabulary |
 | B (1.7B adapter) | **0.200 over 0.082**, worst window from word 900 | 0.281, under 0.501 (first 57 sentences) | coherence, vocabulary |
-| C (4B base) | 0.077 | **0.559 over 0.440**, PRON at 58% vs his 26% | openers, vocabulary |
+| C (4B base) | 0.077 | **0.559 over 0.440**, PRON at 58% vs the author's 26% | openers, vocabulary |
 | D (4B adapter) | 0.000 | 0.391, under 0.461 | cadence |
 
 B is the only coherence flag. A and C are the only opener flags. D is clean on
@@ -413,7 +413,7 @@ their 50 held-out passages, and on that author's base-model cells for contrast.
 
 | author | | echo | openers | paragraphs | cadence | vocabulary | constructions |
 |---|---|---:|---:|---:|---:|---:|---:|
-| patrick_v2 | own prose | 2% | 2% | 2% | 10% | 8% | 2% |
+| private author | own prose | 2% | 2% | 2% | 10% | 8% | 2% |
 | | base cells | 48% | 66% | 47% | 17% | 47% | 54% |
 | chesterton | own prose | 2% | 2% | 4% | 6% | 4% | 6% |
 | | base cells | 13% | 44% | 27% | 18% | 10% | 13% |
@@ -465,7 +465,7 @@ corpus wins: `research-blend` declares research 60% / personal 30% / creative
 The opener band widens as the compared stretch shortens, which is what a matched
 threshold is supposed to do. Measured on the creative voice, 203 units:
 
-| sentences compared | threshold | flags of his own units |
+| sentences compared | threshold | flags of the author's own units |
 |---:|---:|---:|
 | 5 | 0.739 | 2% |
 | 10 | 0.631 | 3% |
