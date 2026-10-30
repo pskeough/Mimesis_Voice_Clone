@@ -12,6 +12,9 @@
     failure, so this script will not create the second one.
   * The old 'mimesis-v2' name, used by earlier versions of this script, is
     removed when it points at this repo.
+  * A registration as the shared local HTTP server (`server --http`, URL on
+    127.0.0.1) is kept as is: re-running must not switch a machine back to one
+    stdio copy per session.
 #>
 $ErrorActionPreference = "Continue"
 $repo = Split-Path -Parent $PSScriptRoot
@@ -43,6 +46,11 @@ if ($name -ne 'mimesis-v2') {
 }
 
 $existing = McpGet $name
+if ($existing -match 'URL:\s*http://(127\.0\.0\.1|localhost):\d+/mcp') {
+    Write-Host "'$name' is registered as the shared local HTTP server ($($Matches[0] -replace 'URL:\s*','')); leaving it."
+    Write-Host "That process is started by the Claude Mind watchdog, or by hand: $py -m mimesis_voice.server --http"
+    exit 0
+}
 if ($existing -and -not (PointsHere $existing)) {
     Write-Host "An MCP server named '$name' is already registered and points elsewhere:"
     $existing -split "`n" | ForEach-Object { Write-Host "    $_" }

@@ -114,6 +114,15 @@ are safe to re-run and skip finished work. If a server named `mimesis` is
 already registered from somewhere else, registration stops and says so rather
 than adding a second voice server; `MIMESIS_MCP_NAME` picks another name.
 
+Shared HTTP mode (Patrick's machine since 2026-10-30): `python -m
+mimesis_voice.server --http` runs ONE stateless server on 127.0.0.1:7080
+(`MIMESIS_MCP_PORT`) for every Claude session, registered as `{"type": "http",
+"url": "http://127.0.0.1:7080/mcp"}`. stdio started one copy per session. It
+refuses a foreign Host or any Origin (DNS rebinding). The Claude Mind watchdog
+(`ClaudeMind/.claude/bin/lkhs-watchdog.ps1`) keeps it running.
+`register-mcp.ps1` leaves an HTTP registration alone; to go back to stdio, run
+`claude mcp remove mimesis -s user` first.
+
 `mimesis new` walks the folder recursively, copies every `.txt/.md/.docx/.pdf`
 into the profile, ingests, and calibrates. Nested paths are folded into
 filenames so `essays/2024/rain.txt` and `notes/rain.txt` both survive. Re-running
