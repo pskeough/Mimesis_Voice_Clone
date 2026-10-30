@@ -23,6 +23,8 @@ answering "write this in my voice" from it is the failure this guards against.
 from __future__ import annotations
 
 import hashlib
+import os
+import sys
 from datetime import datetime, timezone
 
 from fastmcp import FastMCP
@@ -783,7 +785,21 @@ def create_voice(name: str, paths: list[str], author: str | None = None, force: 
 
 
 def main() -> None:
-    mcp.run()
+    # `--http` runs one shared, stateless streamable-HTTP server for every Claude
+    # session, in place of one stdio copy per session (2026-10-30: 4-6 copies for open
+    # sessions, plus one per headless Claude Mind run). No tool keeps per-session
+    # state. User-scope MCP config points at http://127.0.0.1:7080/mcp, and the
+    # Claude Mind watchdog keeps it listening.
+    if "--http" in sys.argv:
+        port = int(os.environ.get("MIMESIS_MCP_PORT", "7080"))
+        # Host/Origin guard: without it a web page could reach this port by DNS
+        # rebinding and call the tools. Claude Code sends Host 127.0.0.1 and no Origin.
+        mcp.run(
+            transport="http", host="127.0.0.1", port=port, stateless_http=True, show_banner=False,
+            host_origin_protection=True, allowed_hosts=["127.0.0.1", "localhost"], allowed_origins=[],
+        )
+    else:
+        mcp.run()
 
 
 if __name__ == "__main__":
