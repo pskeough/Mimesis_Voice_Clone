@@ -23,6 +23,22 @@ mimesis calibrate <you>
 mimesis doctor <you>
 ```
 
+If the folder is not a git clone (it was copied out of a zip, so there is no
+`.git` folder and `git pull` says "not a git repository"), turn it into one
+first. Your profiles are untracked, so none of these commands touch them:
+
+```bash
+git init -b main
+git remote add origin https://github.com/pskeough/Mimesis_Voice_Clone.git
+git fetch origin main
+git reset origin/main      # moves the branch only; files on disk are unchanged
+git checkout -- .          # takes the current version of every engine file
+```
+
+On Windows run `git config --global core.longpaths true` before this if any
+corpus filename is long. Then carry on from `install` above. Later upgrades are
+a plain `git pull`.
+
 What changed and why each step is needed:
 
 - **Two ingest bugs are fixed, and both need `--force`.** A paragraph longer than
